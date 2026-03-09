@@ -1,49 +1,54 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { LoadingScreen } from '@/components/ui'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from './ProtectedRoute'
-import { DashboardPage } from '@/pages/DashboardPage'
-import { TransactionsPage } from '@/pages/TransactionsPage'
-import { RevenuesPage } from '@/pages/RevenuesPage'
-import { ExpensesPage } from '@/pages/ExpensesPage'
-import { AccountsPage } from '@/pages/AccountsPage'
-import { CardsPage } from '@/pages/CardsPage'
-import { CategoriesPage } from '@/pages/CategoriesPage'
-import { BudgetsPage } from '@/pages/BudgetsPage'
-import { GoalsPage } from '@/pages/GoalsPage'
-import { ReportsPage } from '@/pages/ReportsPage'
-import { ImportsPage } from '@/pages/ImportsPage'
-import { AlertsPage } from '@/pages/AlertsPage'
-import { SettingsPage } from '@/pages/SettingsPage'
 import { AuthLayout } from '@/pages/auth/AuthLayout'
-import { LoginPage } from '@/pages/auth/LoginPage'
+
+const LoginPage = lazy(() => import('@/pages/auth/LoginPage').then((m) => ({ default: m.LoginPage })))
+const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
+const TransactionsPage = lazy(() => import('@/pages/TransactionsPage').then((m) => ({ default: m.TransactionsPage })))
+const RevenuesPage = lazy(() => import('@/pages/RevenuesPage').then((m) => ({ default: m.RevenuesPage })))
+const ExpensesPage = lazy(() => import('@/pages/ExpensesPage').then((m) => ({ default: m.ExpensesPage })))
+const AccountsPage = lazy(() => import('@/pages/AccountsPage').then((m) => ({ default: m.AccountsPage })))
+const CardsPage = lazy(() => import('@/pages/CardsPage').then((m) => ({ default: m.CardsPage })))
+const CategoriesPage = lazy(() => import('@/pages/CategoriesPage').then((m) => ({ default: m.CategoriesPage })))
+const BudgetsPage = lazy(() => import('@/pages/BudgetsPage').then((m) => ({ default: m.BudgetsPage })))
+const GoalsPage = lazy(() => import('@/pages/GoalsPage').then((m) => ({ default: m.GoalsPage })))
+const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })))
+const ImportsPage = lazy(() => import('@/pages/ImportsPage').then((m) => ({ default: m.ImportsPage })))
+const AlertsPage = lazy(() => import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })))
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 
 export function AppRouter() {
   return (
-    <Routes>
-      <Route element={<AuthLayout />}>
-        <Route path="/login" element={<LoginPage />} />
-      </Route>
-
-      <Route element={<ProtectedRoute />}>
-        <Route element={<AppShell />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/lancamentos" element={<TransactionsPage />} />
-          <Route path="/receitas" element={<RevenuesPage />} />
-          <Route path="/despesas" element={<ExpensesPage />} />
-          <Route path="/contas" element={<AccountsPage />} />
-          <Route path="/cartoes" element={<CardsPage />} />
-          <Route path="/categorias" element={<CategoriesPage />} />
-          <Route path="/orcamentos" element={<BudgetsPage />} />
-          <Route path="/metas" element={<GoalsPage />} />
-          <Route path="/relatorios" element={<ReportsPage />} />
-          <Route path="/importacoes" element={<ImportsPage />} />
-          <Route path="/alertas" element={<AlertsPage />} />
-          <Route path="/configuracoes" element={<SettingsPage />} />
+    <Suspense fallback={<LoadingScreen message="Carregando módulo..." />}>
+      <Routes>
+        <Route element={<AuthLayout />}>
+          <Route path="/login" element={<LoginPage />} />
         </Route>
-      </Route>
 
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppShell />}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/lancamentos" element={<TransactionsPage />} />
+            <Route path="/receitas" element={<RevenuesPage />} />
+            <Route path="/despesas" element={<ExpensesPage />} />
+            <Route path="/contas" element={<AccountsPage />} />
+            <Route path="/cartoes" element={<CardsPage />} />
+            <Route path="/categorias" element={<CategoriesPage />} />
+            <Route path="/orcamentos" element={<BudgetsPage />} />
+            <Route path="/metas" element={<GoalsPage />} />
+            <Route path="/relatorios" element={<ReportsPage />} />
+            <Route path="/importacoes" element={<ImportsPage />} />
+            <Route path="/alertas" element={<AlertsPage />} />
+            <Route path="/configuracoes" element={<SettingsPage />} />
+          </Route>
+        </Route>
+
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </Suspense>
   )
 }

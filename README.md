@@ -23,7 +23,12 @@ npm install
 cp .env.example .env
 ```
 
-3. Preencha as variáveis com seu projeto Supabase.
+3. Preencha as variáveis com seu projeto Supabase:
+
+```bash
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon-key>
+```
 
 4. Rode a aplicação:
 
@@ -58,6 +63,8 @@ npm run build
 
 - `src/components`: componentes reutilizáveis de layout e UI
 - `src/features/auth`: contexto e regras de autenticação
+- `src/features/family`: base para fluxo familiar multiusuário
+- `src/hooks`: hooks compartilhados da aplicação
 - `src/lib`: integrações e utilitários compartilhados
 - `src/pages`: páginas de rota
 - `src/routes`: composição das rotas e proteção de acesso
@@ -78,3 +85,25 @@ Essas migrations entregam a base para:
 - agrupamento familiar (`family_groups`)
 - vínculo usuário-grupo com papel (`family_members`)
 - convites para expansão multiusuário (`family_invites`)
+
+## Deploy no Render (Static Site)
+
+Este repositório já está preparado para deploy com Vite em `dist`.
+
+### Configuração recomendada
+
+- **Build Command**: `npm ci && npm run build`
+- **Publish Directory**: `dist`
+- **Environment Variables**:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
+
+### Rewrite SPA
+
+Para evitar erro 404 ao recarregar rotas (`/dashboard`, `/receitas`, etc.), use rewrite para `index.html`.
+
+Você pode usar o arquivo `render.yaml` deste projeto, que já contém:
+
+- build command
+- publish path
+- rewrite `/* -> /index.html`

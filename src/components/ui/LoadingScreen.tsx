@@ -1,6 +1,10 @@
 import { Spinner } from './Spinner'
 
-export function LoadingScreen() {
+interface LoadingScreenProps {
+  message?: string
+}
+
+export function LoadingScreen({ message = 'Carregando o FFP...' }: LoadingScreenProps) {
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-bg-main">
       <div className="flex flex-col items-center gap-4">
@@ -8,6 +12,7 @@ export function LoadingScreen() {
           $
         </div>
         <Spinner size="lg" />
+        <p className="text-sm text-text-secondary">{message}</p>
       </div>
     </div>
   )
