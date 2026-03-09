@@ -1,12 +1,19 @@
 import { createContext, useEffect, useState, useCallback, type ReactNode } from 'react'
-import type { User, Session } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabase'
-import type { Profile } from '@/types/database'
+import type { UserProfile } from '@/types/database'
+import { ensureUserProfile, getUserProfile } from '@/services/firestore/family'
+import {
+  clearSession,
+  fetchCurrentUser,
+  loadSession,
+  sendPasswordReset,
+  signInWithEmail,
+  signUpWithEmail,
+  type AuthUser,
+} from '@/services/firebase'
 
 interface AuthContextType {
-  user: User | null
-  session: Session | null
-  profile: Profile | null
+  user: AuthUser | null
+  profile: UserProfile | null
   isLoading: boolean
   signUp: (email: string, password: string, fullName: string) => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
@@ -17,75 +24,74 @@ interface AuthContextType {
 export const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  const fetchProfile = useCallback(async (userId: string) => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    setProfile(data as Profile | null)
+  const hydrateProfile = useCallback(async (authUser: AuthUser) => {
+    await ensureUserProfile({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
+    const data = await getUserProfile(authUser.uid)
+    setProfile(data)
   }, [])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      setSession(currentSession)
-      setUser(currentSession?.user ?? null)
-      if (currentSession?.user) {
-        fetchProfile(currentSession.user.id).finally(() => setIsLoading(false))
-      } else {
+    const bootstrapSession = async () => {
+      const saved = loadSession()
+      if (!saved) {
+        setIsLoading(false)
+        return
+      }
+
+      try {
+        const currentUser = await fetchCurrentUser(saved.idToken)
+        if (!currentUser) {
+          clearSession()
+          setIsLoading(false)
+          return
+        }
+
+        setUser({ ...saved, ...currentUser })
+        await hydrateProfile({ ...saved, ...currentUser })
+      } catch {
+        clearSession()
+      } finally {
         setIsLoading(false)
       }
-    })
+    }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
-        setSession(newSession)
-        setUser(newSession?.user ?? null)
-        if (newSession?.user) {
-          fetchProfile(newSession.user.id)
-        } else {
-          setProfile(null)
-        }
-      },
-    )
+    void bootstrapSession()
+  }, [hydrateProfile])
 
-    return () => subscription.unsubscribe()
-  }, [fetchProfile])
+  const signUp = useCallback(
+    async (email: string, password: string, fullName: string) => {
+      const account = await signUpWithEmail(email, password, fullName)
+      setUser(account)
+      await hydrateProfile(account)
+    },
+    [hydrateProfile],
+  )
 
-  const signUp = useCallback(async (email: string, password: string, fullName: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName } },
-    })
-    if (error) throw error
-  }, [])
-
-  const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw error
-  }, [])
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      const account = await signInWithEmail(email, password)
+      setUser(account)
+      await hydrateProfile(account)
+    },
+    [hydrateProfile],
+  )
 
   const signOut = useCallback(async () => {
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
+    clearSession()
+    setUser(null)
     setProfile(null)
   }, [])
 
   const resetPassword = useCallback(async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email)
-    if (error) throw error
+    await sendPasswordReset(email)
   }, [])
 
   return (
-    <AuthContext.Provider
-      value={{ user, session, profile, isLoading, signUp, signIn, signOut, resetPassword }}
-    >
+    <AuthContext.Provider value={{ user, profile, isLoading, signUp, signIn, signOut, resetPassword }}>
       {children}
     </AuthContext.Provider>
   )

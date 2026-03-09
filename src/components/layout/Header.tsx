@@ -23,7 +23,7 @@ export function Header({ onMenuClick }: HeaderProps) {
         <span className="text-lg font-bold text-text-primary">FFP</span>
       </div>
 
-      <Avatar name={profile?.full_name || 'Usuário'} src={profile?.avatar_url} size="sm" />
+      <Avatar name={profile?.displayName || 'Usuário'} src={profile?.photoURL} size="sm" />
     </header>
   )
 }

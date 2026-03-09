@@ -1,13 +1,15 @@
 # FFP — Family Financial Planner
 
-Base técnica do **Bloco 1** com foco em fundação escalável, layout responsivo e autenticação com Supabase.
+Base técnica do **Bloco 1** com foco em fundação escalável, layout responsivo e autenticação com Firebase.
 
 ## Stack
 
 - React + TypeScript + Vite
 - Tailwind CSS
 - React Router
-- Supabase (Auth + Postgres)
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Storage (base preparada para evolução)
 
 ## Como rodar localmente
 
@@ -23,11 +25,15 @@ npm install
 cp .env.example .env
 ```
 
-3. Preencha as variáveis com seu projeto Supabase:
+3. Preencha as variáveis do Firebase no `.env`:
 
 ```bash
-VITE_SUPABASE_URL=https://<project-ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon-key>
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
 ```
 
 4. Rode a aplicação:
@@ -65,45 +71,44 @@ npm run build
 - `src/features/auth`: contexto e regras de autenticação
 - `src/features/family`: base para fluxo familiar multiusuário
 - `src/hooks`: hooks compartilhados da aplicação
-- `src/lib`: integrações e utilitários compartilhados
+- `src/lib/firebase`: inicialização e clientes do Firebase
+- `src/services/firestore`: serviços para modelagem inicial em Firestore
 - `src/pages`: páginas de rota
 - `src/routes`: composição das rotas e proteção de acesso
-- `supabase/migrations`: SQL versionado de estrutura inicial
+- `server.mjs`: servidor Node para deploy como Render Web Service
 
-## SQL / Migrations (Supabase)
+## Estrutura inicial no Firestore
 
-Executar no Supabase CLI/SQL Editor as migrations em `supabase/migrations`:
+Coleções base:
 
-1. `00001_create_profiles.sql`
-2. `00002_create_family_groups.sql`
-3. `00003_create_family_members.sql`
-4. `00004_create_family_invites.sql`
+1. `users`
+   - documento com id igual ao `uid` do Firebase Auth
+   - campos iniciais: `email`, `displayName`, `photoURL`, `familyGroupId`, `createdAt`, `updatedAt`
 
-Essas migrations entregam a base para:
+2. `family_groups`
+   - grupo familiar principal
+   - campos iniciais: `name`, `ownerUid`, `createdAt`, `updatedAt`
 
-- perfil por usuário autenticado (`profiles`)
-- agrupamento familiar (`family_groups`)
-- vínculo usuário-grupo com papel (`family_members`)
-- convites para expansão multiusuário (`family_invites`)
+3. `family_members`
+   - vínculo usuário-grupo
+   - campos iniciais: `familyGroupId`, `uid`, `role`, `createdAt`, `updatedAt`
 
-## Deploy no Render (Static Site)
+Essa modelagem mantém base para evolução multiusuário familiar.
 
-Este repositório já está preparado para deploy com Vite em `dist`.
+## Deploy no Render (Web Service)
+
+Este projeto está preparado para Render **Web Service** com build Vite e servidor Node para SPA.
 
 ### Configuração recomendada
 
 - **Build Command**: `npm ci && npm run build`
-- **Publish Directory**: `dist`
+- **Start Command**: `npm run start`
 - **Environment Variables**:
-  - `VITE_SUPABASE_URL`
-  - `VITE_SUPABASE_ANON_KEY`
+  - `VITE_FIREBASE_API_KEY`
+  - `VITE_FIREBASE_AUTH_DOMAIN`
+  - `VITE_FIREBASE_PROJECT_ID`
+  - `VITE_FIREBASE_STORAGE_BUCKET`
+  - `VITE_FIREBASE_MESSAGING_SENDER_ID`
+  - `VITE_FIREBASE_APP_ID`
 
-### Rewrite SPA
-
-Para evitar erro 404 ao recarregar rotas (`/dashboard`, `/receitas`, etc.), use rewrite para `index.html`.
-
-Você pode usar o arquivo `render.yaml` deste projeto, que já contém:
-
-- build command
-- publish path
-- rewrite `/* -> /index.html`
+Você pode usar o arquivo `render.yaml` deste projeto para provisionar o serviço automaticamente.

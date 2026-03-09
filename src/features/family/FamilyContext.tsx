@@ -1,14 +1,14 @@
 import { createContext, useEffect, useState, useCallback, type ReactNode } from 'react'
-import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import type { FamilyGroup, FamilyMember } from '@/types/database'
+import { createFamilyGroup, getFamilyByUser } from '@/services/firestore/family'
 
 interface FamilyContextType {
   familyGroup: FamilyGroup | null
   members: FamilyMember[]
   isLoading: boolean
   createFamily: (name: string) => Promise<void>
-  inviteMember: (email: string) => Promise<void>
+  inviteMember: (_email: string) => Promise<void>
 }
 
 export const FamilyContext = createContext<FamilyContextType | null>(null)
@@ -22,32 +22,9 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
   const fetchFamily = useCallback(async (userId: string) => {
     setIsLoading(true)
     try {
-      const { data: membership } = await supabase
-        .from('family_members')
-        .select('family_group_id')
-        .eq('user_id', userId)
-        .limit(1)
-        .single()
-
-      if (membership) {
-        const { data: group } = await supabase
-          .from('family_groups')
-          .select('*')
-          .eq('id', membership.family_group_id)
-          .single()
-
-        setFamilyGroup(group as FamilyGroup | null)
-
-        const { data: memberList } = await supabase
-          .from('family_members')
-          .select('*')
-          .eq('family_group_id', membership.family_group_id)
-
-        setMembers((memberList as FamilyMember[] | null) ?? [])
-      } else {
-        setFamilyGroup(null)
-        setMembers([])
-      }
+      const data = await getFamilyByUser(userId)
+      setFamilyGroup(data.group)
+      setMembers(data.members)
     } catch {
       setFamilyGroup(null)
       setMembers([])
@@ -58,7 +35,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (user) {
-      fetchFamily(user.id)
+      fetchFamily(user.uid)
     } else {
       setFamilyGroup(null)
       setMembers([])
@@ -69,63 +46,15 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
   const createFamily = useCallback(
     async (name: string) => {
       if (!user) throw new Error('Usuário não autenticado')
-
-      const { data: group, error: groupError } = await supabase
-        .from('family_groups')
-        .insert({ name, created_by: user.id })
-        .select()
-        .single()
-
-      if (groupError || !group) throw groupError ?? new Error('Erro ao criar grupo')
-
-      const typedGroup = group as FamilyGroup
-
-      const { error: memberError } = await supabase
-        .from('family_members')
-        .insert({
-          family_group_id: typedGroup.id,
-          user_id: user.id,
-          role: 'admin',
-        })
-
-      if (memberError) throw memberError
-
-      setFamilyGroup(typedGroup)
-      setMembers([
-        {
-          id: crypto.randomUUID(),
-          family_group_id: typedGroup.id,
-          user_id: user.id,
-          role: 'admin',
-          joined_at: new Date().toISOString(),
-        },
-      ])
+      await createFamilyGroup({ uid: user.uid, name })
+      await fetchFamily(user.uid)
     },
-    [user],
+    [fetchFamily, user],
   )
 
-  const inviteMember = useCallback(
-    async (email: string) => {
-      if (!user || !familyGroup) throw new Error('Grupo familiar não encontrado')
+  const inviteMember = useCallback(async () => {
+    throw new Error('Convites serão implementados no próximo bloco.')
+  }, [])
 
-      const { error } = await supabase
-        .from('family_invites')
-        .insert({
-          family_group_id: familyGroup.id,
-          invited_by: user.id,
-          email,
-        })
-
-      if (error) throw error
-    },
-    [user, familyGroup],
-  )
-
-  return (
-    <FamilyContext.Provider
-      value={{ familyGroup, members, isLoading, createFamily, inviteMember }}
-    >
-      {children}
-    </FamilyContext.Provider>
-  )
+  return <FamilyContext.Provider value={{ familyGroup, members, isLoading, createFamily, inviteMember }}>{children}</FamilyContext.Provider>
 }
