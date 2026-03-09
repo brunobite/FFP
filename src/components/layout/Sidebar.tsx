@@ -69,9 +69,9 @@ export function Sidebar({ className }: SidebarProps) {
 
       <div className="border-t border-white/10 p-4">
         <div className="flex items-center gap-3">
-          <Avatar name={profile?.full_name || 'Usuário'} src={profile?.avatar_url} size="sm" />
+          <Avatar name={profile?.displayName || 'Usuário'} src={profile?.photoURL} size="sm" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{profile?.full_name || 'Usuário'}</p>
+            <p className="truncate text-sm font-semibold">{profile?.displayName || 'Usuário'}</p>
           </div>
           <button onClick={() => signOut()} className="rounded-lg p-1.5 text-white/60 hover:bg-white/10 hover:text-white" title="Sair">
             <LogOut className="h-4 w-4" />
