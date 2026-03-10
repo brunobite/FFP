@@ -1,4 +1,4 @@
-import { createContext, useEffect, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import type { UserProfile } from '@/types/database'
 import { ensureInitialFamilyBootstrap, getUserProfile } from '@/services/firestore/family'
 import { isFirestoreOfflineError } from '@/services/firestore/errors'
@@ -85,22 +85,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void bootstrapSession()
   }, [hydrateProfile])
 
+  const offlineRetries = useRef(0)
+  const MAX_OFFLINE_RETRIES = 3
+
   useEffect(() => {
-    if (!isOffline || !user) return
+    if (!isOffline || !user) {
+      // Reset retry counter when we leave offline state or lose user
+      offlineRetries.current = 0
+      return
+    }
 
     const handleOnline = () => {
+      offlineRetries.current = 0
       console.info('[auth] conexão restabelecida — recarregando perfil.')
       void hydrateProfile(user)
     }
 
     // If navigator.onLine is already true, the 'online' event will never fire.
-    // Schedule an automatic retry so the app doesn't stay stuck on the offline screen.
+    // Schedule an automatic retry with a limit to prevent infinite loops.
     if (typeof navigator !== 'undefined' && navigator.onLine) {
-      const retryTimer = setTimeout(() => {
-        console.info('[auth] navigator.onLine é true mas isOffline está ativo — tentando reconectar.')
-        void hydrateProfile(user)
-      }, 3000)
-      return () => clearTimeout(retryTimer)
+      if (offlineRetries.current >= MAX_OFFLINE_RETRIES) {
+        console.warn(`[auth] limite de ${MAX_OFFLINE_RETRIES} tentativas de reconexão atingido — aguardando evento online.`)
+        // Fall through to register the 'online' listener below instead of looping
+      } else {
+        const attempt = ++offlineRetries.current
+        const delay = Math.min(3000 * Math.pow(2, attempt - 1), 15000)
+        const retryTimer = setTimeout(() => {
+          console.info(`[auth] tentativa de reconexão ${attempt}/${MAX_OFFLINE_RETRIES}`)
+          void hydrateProfile(user)
+        }, delay)
+        return () => clearTimeout(retryTimer)
+      }
     }
 
     window.addEventListener('online', handleOnline)
