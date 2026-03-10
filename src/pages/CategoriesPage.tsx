@@ -145,6 +145,7 @@ export function CategoriesPage() {
     setSaving(true)
     setFormError('')
     setError('')
+    setFeedback('')
     try {
       await upsertCategory(user.uid, form)
       setFeedback(form.id ? 'Categoria atualizada com sucesso.' : 'Categoria criada com sucesso.')
@@ -158,8 +159,12 @@ export function CategoriesPage() {
   }
 
   const toggleActive = async (row: Category) => {
-    if (!user?.uid) return
+    if (!user?.uid) {
+      setError('Faça login novamente para continuar.')
+      return
+    }
     setError('')
+    setFeedback('')
     try {
       await upsertCategory(user.uid, {
         id: row.id,

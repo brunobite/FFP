@@ -51,7 +51,13 @@ function nowIso() {
 
 async function resolveFamilyGroupId(uid: string) {
   const family = await getFamilyByUser(uid)
-  if (!family.group) throw new Error('Usuário sem grupo familiar para acessar dados financeiros.')
+  if (!family.group?.id) {
+    const error = new Error('Usuário sem grupo familiar para acessar dados financeiros.') as Error & { code: string }
+    error.code = 'missing-family-group'
+    throw error
+  }
+
+  console.debug('[firestore][context] familyGroupId resolvido', { uid, familyGroupId: family.group.id })
   return { familyGroupId: family.group.id, members: family.members }
 }
 
@@ -59,6 +65,12 @@ function toNumber(value: unknown) {
   if (typeof value === 'number') return value
   if (typeof value === 'string') return Number(value) || 0
   return 0
+}
+
+function ensureDocBelongsToFamily(docFamilyGroupId: string | undefined, expectedFamilyGroupId: string, entityLabel: string) {
+  if (!docFamilyGroupId || docFamilyGroupId !== expectedFamilyGroupId) {
+    throw new Error(`${entityLabel} não encontrado para este grupo familiar.`)
+  }
 }
 
 export async function listCategories(uid: string): Promise<Category[]> {
@@ -111,7 +123,12 @@ export async function upsertCategory(
     }
 
     if (payload.id) {
-      await db.doc(`categories/${payload.id}`).set(base, { merge: true })
+      const docRef = db.doc(`categories/${payload.id}`)
+      const snapshot = await docRef.get()
+      const current = (snapshot.data() || {}) as CategoryDoc
+      if (!snapshot.exists) throw new Error('Categoria não encontrada para atualização.')
+      ensureDocBelongsToFamily(current.familyGroupId, familyGroupId, 'Categoria')
+      await docRef.set(base, { merge: true })
       return payload.id
     }
 
@@ -124,97 +141,122 @@ export async function upsertCategory(
 }
 
 export async function listAccounts(uid: string): Promise<Account[]> {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const snapshot = await db.collection('accounts').where('familyGroupId', '==', familyGroupId).get()
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const snapshot = await db.collection('accounts').where('familyGroupId', '==', familyGroupId).get()
 
-  return snapshot.docs
-    .map((doc) => {
-      const data = (doc.data() || {}) as AccountDoc
-      return {
-        id: doc.id,
-        familyGroupId,
-        name: data.name || 'Conta',
-        type: data.type || 'checking',
-        initialBalance: toNumber(data.initialBalance),
-        isActive: data.isActive ?? true,
-        createdAt: data.createdAt || nowIso(),
-        updatedAt: data.updatedAt || nowIso(),
-      } satisfies Account
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    return snapshot.docs
+      .map((doc) => {
+        const data = (doc.data() || {}) as AccountDoc
+        return {
+          id: doc.id,
+          familyGroupId,
+          name: data.name || 'Conta',
+          type: data.type || 'checking',
+          initialBalance: toNumber(data.initialBalance),
+          isActive: data.isActive ?? true,
+          createdAt: data.createdAt || nowIso(),
+          updatedAt: data.updatedAt || nowIso(),
+        } satisfies Account
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+  } catch (error) {
+    logFirestoreError('accounts.list', error, { uid })
+    throw new Error(mapFirestoreError('carregar', error))
+  }
 }
 
 export async function upsertAccount(
   uid: string,
   payload: { id?: string; name: string; type: AccountType; initialBalance: number; isActive?: boolean },
 ) {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const now = nowIso()
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const now = nowIso()
 
-  const base = {
-    familyGroupId,
-    name: payload.name.trim(),
-    type: payload.type,
-    initialBalance: payload.initialBalance,
-    isActive: payload.isActive ?? true,
-    updatedAt: now,
+    const base = {
+      familyGroupId,
+      name: payload.name.trim(),
+      type: payload.type,
+      initialBalance: payload.initialBalance,
+      isActive: payload.isActive ?? true,
+      updatedAt: now,
+    }
+
+    if (payload.id) {
+      const docRef = db.doc(`accounts/${payload.id}`)
+      const snapshot = await docRef.get()
+      const current = (snapshot.data() || {}) as AccountDoc
+      if (!snapshot.exists) throw new Error('Conta não encontrada para atualização.')
+      ensureDocBelongsToFamily(current.familyGroupId, familyGroupId, 'Conta')
+      await docRef.set(base, { merge: true })
+      return payload.id
+    }
+
+    const created = await db.collection('accounts').add({ ...base, createdAt: now })
+    return created.id
+  } catch (error) {
+    logFirestoreError('accounts.upsert', error, { uid, accountId: payload.id || null })
+    throw new Error(mapFirestoreError(payload.id ? 'atualizar' : 'salvar', error))
   }
-
-  if (payload.id) {
-    await db.doc(`accounts/${payload.id}`).set(base, { merge: true })
-    return payload.id
-  }
-
-  const created = await db.collection('accounts').add({ ...base, createdAt: now })
-  return created.id
 }
 
 export async function listFamilyMembersSummary(uid: string): Promise<FamilyMemberSummary[]> {
-  const { members } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
+  try {
+    const { members } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
 
-  const rows = await Promise.all(
-    members.map(async (member) => {
-      const profile = await db.doc(`users/${member.uid}`).get()
-      const profileData = profile.data() as { displayName?: string; email?: string } | undefined
-      return {
-        uid: member.uid,
-        role: member.role,
-        displayName: profileData?.displayName || profileData?.email || 'Membro',
-      } satisfies FamilyMemberSummary
-    }),
-  )
+    const rows = await Promise.all(
+      members.map(async (member) => {
+        const profile = await db.doc(`users/${member.uid}`).get()
+        const profileData = profile.data() as { displayName?: string; email?: string } | undefined
+        return {
+          uid: member.uid,
+          role: member.role,
+          displayName: profileData?.displayName || profileData?.email || 'Membro',
+        } satisfies FamilyMemberSummary
+      }),
+    )
 
-  return rows.sort((a, b) => a.displayName.localeCompare(b.displayName, 'pt-BR'))
+    return rows.sort((a, b) => a.displayName.localeCompare(b.displayName, 'pt-BR'))
+  } catch (error) {
+    logFirestoreError('family.members.summary', error, { uid })
+    throw new Error(mapFirestoreError('carregar', error))
+  }
 }
 
 export async function listTransactions(uid: string): Promise<Transaction[]> {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const snapshot = await db.collection('transactions').where('familyGroupId', '==', familyGroupId).get()
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const snapshot = await db.collection('transactions').where('familyGroupId', '==', familyGroupId).get()
 
-  return snapshot.docs
-    .map((doc) => {
-      const data = (doc.data() || {}) as TransactionDoc
-      return {
-        id: doc.id,
-        familyGroupId,
-        type: data.type === 'income' ? 'income' : 'expense',
-        description: data.description || 'Lançamento',
-        amount: toNumber(data.amount),
-        date: data.date || new Date().toISOString().slice(0, 10),
-        categoryId: data.categoryId || '',
-        accountId: data.accountId || '',
-        memberUid: data.memberUid || '',
-        notes: data.notes || '',
-        status: data.status || 'posted',
-        createdAt: data.createdAt || nowIso(),
-        updatedAt: data.updatedAt || nowIso(),
-      } satisfies Transaction
-    })
-    .sort((a, b) => b.date.localeCompare(a.date))
+    return snapshot.docs
+      .map((doc) => {
+        const data = (doc.data() || {}) as TransactionDoc
+        return {
+          id: doc.id,
+          familyGroupId,
+          type: data.type === 'income' ? 'income' : 'expense',
+          description: data.description || 'Lançamento',
+          amount: toNumber(data.amount),
+          date: data.date || new Date().toISOString().slice(0, 10),
+          categoryId: data.categoryId || '',
+          accountId: data.accountId || '',
+          memberUid: data.memberUid || '',
+          notes: data.notes || '',
+          status: data.status || 'posted',
+          createdAt: data.createdAt || nowIso(),
+          updatedAt: data.updatedAt || nowIso(),
+        } satisfies Transaction
+      })
+      .sort((a, b) => b.date.localeCompare(a.date))
+  } catch (error) {
+    logFirestoreError('transactions.list', error, { uid })
+    throw new Error(mapFirestoreError('carregar', error))
+  }
 }
 
 export async function upsertTransaction(
@@ -232,45 +274,60 @@ export async function upsertTransaction(
     status: TransactionStatus
   },
 ) {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const now = nowIso()
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const now = nowIso()
 
-  const base = {
-    familyGroupId,
-    type: payload.type,
-    description: payload.description.trim(),
-    amount: payload.amount,
-    date: payload.date,
-    categoryId: payload.categoryId,
-    accountId: payload.accountId,
-    memberUid: payload.memberUid,
-    notes: payload.notes?.trim() || '',
-    status: payload.status,
-    updatedAt: now,
+    const base = {
+      familyGroupId,
+      type: payload.type,
+      description: payload.description.trim(),
+      amount: payload.amount,
+      date: payload.date,
+      categoryId: payload.categoryId,
+      accountId: payload.accountId,
+      memberUid: payload.memberUid,
+      notes: payload.notes?.trim() || '',
+      status: payload.status,
+      updatedAt: now,
+    }
+
+    if (payload.id) {
+      const docRef = db.doc(`transactions/${payload.id}`)
+      const snapshot = await docRef.get()
+      const current = (snapshot.data() || {}) as TransactionDoc
+      if (!snapshot.exists) throw new Error('Lançamento não encontrado para atualização.')
+      ensureDocBelongsToFamily(current.familyGroupId, familyGroupId, 'Lançamento')
+      await docRef.set(base, { merge: true })
+      return payload.id
+    }
+
+    const created = await db.collection('transactions').add({ ...base, createdAt: now })
+    return created.id
+  } catch (error) {
+    logFirestoreError('transactions.upsert', error, { uid, transactionId: payload.id || null })
+    throw new Error(mapFirestoreError(payload.id ? 'atualizar' : 'salvar', error))
   }
-
-  if (payload.id) {
-    await db.doc(`transactions/${payload.id}`).set(base, { merge: true })
-    return payload.id
-  }
-
-  const created = await db.collection('transactions').add({ ...base, createdAt: now })
-  return created.id
 }
 
 export async function deleteTransaction(uid: string, transactionId: string) {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const docRef = db.doc(`transactions/${transactionId}`)
-  const snapshot = await docRef.get()
-  const data = (snapshot.data() || {}) as TransactionDoc
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const docRef = db.doc(`transactions/${transactionId}`)
+    const snapshot = await docRef.get()
+    const data = (snapshot.data() || {}) as TransactionDoc
 
-  if (!snapshot.exists || data.familyGroupId !== familyGroupId) {
-    throw new Error('Lançamento não encontrado para este grupo familiar.')
+    if (!snapshot.exists || data.familyGroupId !== familyGroupId) {
+      throw new Error('Lançamento não encontrado para este grupo familiar.')
+    }
+
+    await docRef.delete()
+  } catch (error) {
+    logFirestoreError('transactions.delete', error, { uid, transactionId })
+    throw new Error(mapFirestoreError('excluir', error))
   }
-
-  await docRef.delete()
 }
 
 export async function getMonthlyTransactionsSummary(uid: string, referenceDate = new Date()) {

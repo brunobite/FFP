@@ -6,6 +6,8 @@ import { ProtectedRoute } from './ProtectedRoute'
 import { AuthLayout } from '@/pages/auth/AuthLayout'
 
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage').then((m) => ({ default: m.LoginPage })))
+const SignupPage = lazy(() => import('@/pages/auth/SignupPage').then((m) => ({ default: m.SignupPage })))
+const ForgotPasswordPage = lazy(() => import('@/pages/auth/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
 const TransactionsPage = lazy(() => import('@/pages/TransactionsPage').then((m) => ({ default: m.TransactionsPage })))
 const RevenuesPage = lazy(() => import('@/pages/RevenuesPage').then((m) => ({ default: m.RevenuesPage })))
@@ -26,6 +28,11 @@ export function AppRouter() {
       <Routes>
         <Route element={<AuthLayout />}>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/login" element={<Navigate to="/login" replace />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/auth/signup" element={<Navigate to="/signup" replace />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/auth/forgot-password" element={<Navigate to="/forgot-password" replace />} />
         </Route>
 
         <Route element={<ProtectedRoute />}>
