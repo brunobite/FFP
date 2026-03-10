@@ -1,5 +1,6 @@
 import { getFirestoreClient } from '@/lib/firebase/sdk'
 import { loadSession } from '@/services/firebase'
+import { isFirestoreOfflineError } from '@/services/firestore/errors'
 import type { FamilyGroup, FamilyMember, FamilyRole, UserProfile } from '@/types/database'
 
 interface ProfileDoc {
@@ -64,7 +65,18 @@ async function getUserDocRef(uid: string) {
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const userRef = await getUserDocRef(uid)
-  const snapshot = await userRef.get()
+  let snapshot = await userRef.get()
+
+  if (!snapshot.exists) {
+    try {
+      snapshot = await userRef.get({ source: 'cache' })
+    } catch (cacheError) {
+      if (!isFirestoreOfflineError(cacheError)) {
+        throw cacheError
+      }
+    }
+  }
+
   if (!snapshot.exists) {
     return null
   }
@@ -74,7 +86,17 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 
 export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
   const userRef = await getUserDocRef(params.uid)
-  const existing = await userRef.get()
+  let existing = await userRef.get()
+
+  if (!existing.exists) {
+    try {
+      existing = await userRef.get({ source: 'cache' })
+    } catch (cacheError) {
+      if (!isFirestoreOfflineError(cacheError)) {
+        throw cacheError
+      }
+    }
+  }
 
   if (!existing.exists) {
     const base = createDefaultProfile(params)
@@ -161,6 +183,12 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
 
 export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
   const db = await getFirestoreClient()
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    console.info('[firestore][bootstrap] bootstrap remoto ignorado: cliente offline')
+    return
+  }
+
   const profile = await ensureUserProfile(params)
   const now = nowIso()
   let familyGroupId = profile.familyGroupId

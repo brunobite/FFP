@@ -12,7 +12,7 @@ type FirestoreCompatInstance = {
     get: () => Promise<QuerySnapshot>
   }
   doc: (path: string) => {
-    get: () => Promise<DocumentSnapshot>
+    get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<DocumentSnapshot>
     set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>
     update: (data: Record<string, unknown>) => Promise<void>
     delete: () => Promise<void>
@@ -30,11 +30,15 @@ type RawFirestoreClient = {
     get: () => Promise<RawQuerySnapshot>
   }
   doc: (path: string) => {
-    get: () => Promise<RawDocSnapshot>
+    get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<RawDocSnapshot>
     set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>
     update: (data: Record<string, unknown>) => Promise<void>
     delete: () => Promise<void>
   }
+}
+
+type FirestoreWithPersistence = RawFirestoreClient & {
+  enablePersistence?: (settings?: { synchronizeTabs?: boolean }) => Promise<void>
 }
 
 type FirebaseCompatGlobal = {
@@ -102,7 +106,25 @@ function createFirestoreClient(): FirestoreCompatInstance {
     })
   }
 
-  const db = sdk.app().firestore()
+  const db = sdk.app().firestore() as FirestoreWithPersistence
+
+  if (typeof db.enablePersistence === 'function') {
+    void db.enablePersistence({ synchronizeTabs: true }).catch((error) => {
+      const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code: string }).code : 'unknown'
+      if (code === 'failed-precondition') {
+        console.warn('[firestore][sdk] persistência local não habilitada (múltiplas abas abertas).')
+        return
+      }
+
+      if (code === 'unimplemented') {
+        console.warn('[firestore][sdk] persistência local indisponível neste navegador.')
+        return
+      }
+
+      console.warn('[firestore][sdk] falha ao habilitar persistência local.', error)
+    })
+  }
+
   console.info('[firestore][sdk] cliente Firestore Web SDK inicializado')
 
   return {

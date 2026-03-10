@@ -17,7 +17,11 @@ export function FamilySetupGate() {
   }
 
   if (!profile) {
-    return <LoadingScreen message="Carregando seu perfil..." />
+    if (location.pathname !== SETUP_PATH) {
+      return <Navigate to={SETUP_PATH} replace />
+    }
+
+    return <Outlet />
   }
 
   if (!profile.familyGroupId && location.pathname !== SETUP_PATH) {
@@ -30,4 +34,3 @@ export function FamilySetupGate() {
 
   return <Outlet />
 }
-
