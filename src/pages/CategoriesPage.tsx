@@ -4,6 +4,8 @@ import {
   BadgeDollarSign,
   Briefcase,
   Car,
+  ChevronDown,
+  ChevronUp,
   Fuel,
   Gift,
   GraduationCap,
@@ -76,6 +78,8 @@ export function CategoriesPage() {
   const [form, setForm] = useState<CategoryForm>(initialForm)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false)
+  const [isIconPickerOpen, setIsIconPickerOpen] = useState(false)
 
   const fetchRows = async () => {
     if (!user?.uid) return
@@ -100,6 +104,8 @@ export function CategoriesPage() {
   const openNew = () => {
     setForm(initialForm)
     setFormError('')
+    setIsColorPickerOpen(false)
+    setIsIconPickerOpen(false)
     setIsModalOpen(true)
   }
 
@@ -113,8 +119,12 @@ export function CategoriesPage() {
       isActive: row.isActive,
     })
     setFormError('')
+    setIsColorPickerOpen(false)
+    setIsIconPickerOpen(false)
     setIsModalOpen(true)
   }
+
+  const selectedIcon = PRESET_ICONS.find((icon) => icon.id === form.icon) ?? PRESET_ICONS[0]
 
   const save = async () => {
     if (!user?.uid) {
@@ -258,12 +268,27 @@ export function CategoriesPage() {
 
           <div>
             <label className="mb-1.5 block text-sm font-semibold text-text-primary">Cor</label>
-            <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+            <button
+              type="button"
+              className="flex h-10 w-full items-center justify-between rounded-lg border border-border bg-bg-card px-3 text-sm text-text-primary"
+              onClick={() => setIsColorPickerOpen((prev) => !prev)}
+              aria-expanded={isColorPickerOpen}
+            >
+              <span className="inline-flex items-center gap-2">
+                <span className="h-5 w-5 rounded-full border border-border" style={{ backgroundColor: form.color }} />
+                {form.color}
+              </span>
+              {isColorPickerOpen ? <ChevronUp className="h-4 w-4 text-text-secondary" /> : <ChevronDown className="h-4 w-4 text-text-secondary" />}
+            </button>
+            <div className={isColorPickerOpen ? 'mt-2 grid grid-cols-5 gap-2 sm:grid-cols-10' : 'hidden'}>
               {PRESET_COLORS.map((color) => (
                 <button
                   key={color}
                   type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, color }))}
+                  onClick={() => {
+                    setForm((prev) => ({ ...prev, color }))
+                    setIsColorPickerOpen(false)
+                  }}
                   className="h-9 w-9 rounded-full border-2 transition-transform hover:scale-105"
                   style={{
                     backgroundColor: color,
@@ -274,12 +299,23 @@ export function CategoriesPage() {
                 />
               ))}
             </div>
-            <p className="mt-2 text-xs text-text-secondary">Cor selecionada: {form.color}</p>
           </div>
 
           <div>
             <label className="mb-1.5 block text-sm font-semibold text-text-primary">Ícone</label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <button
+              type="button"
+              className="flex h-10 w-full items-center justify-between rounded-lg border border-border bg-bg-card px-3 text-sm text-text-primary"
+              onClick={() => setIsIconPickerOpen((prev) => !prev)}
+              aria-expanded={isIconPickerOpen}
+            >
+              <span className="inline-flex items-center gap-2">
+                {selectedIcon ? <selectedIcon.icon className="h-4 w-4" /> : null}
+                {selectedIcon?.label ?? form.icon}
+              </span>
+              {isIconPickerOpen ? <ChevronUp className="h-4 w-4 text-text-secondary" /> : <ChevronDown className="h-4 w-4 text-text-secondary" />}
+            </button>
+            <div className={isIconPickerOpen ? 'mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3' : 'hidden'}>
               {PRESET_ICONS.map((iconOption) => {
                 const Icon = iconOption.icon
                 const selected = form.icon === iconOption.id
@@ -287,7 +323,10 @@ export function CategoriesPage() {
                   <button
                     key={iconOption.id}
                     type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, icon: iconOption.id }))}
+                    onClick={() => {
+                      setForm((prev) => ({ ...prev, icon: iconOption.id }))
+                      setIsIconPickerOpen(false)
+                    }}
                     className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                       selected ? 'border-primary bg-primary/10 text-primary' : 'border-border text-text-secondary hover:border-primary/50'
                     }`}
