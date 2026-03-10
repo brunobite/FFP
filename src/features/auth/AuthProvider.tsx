@@ -19,6 +19,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
+  reloadProfile: () => Promise<void>
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null)
@@ -92,8 +93,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPasswordReset(email)
   }, [])
 
+  const reloadProfile = useCallback(async () => {
+    if (!user) return
+    await hydrateProfile(user)
+  }, [hydrateProfile, user])
+
   return (
-    <AuthContext.Provider value={{ user, profile, isLoading, signUp, signIn, signOut, resetPassword }}>
+    <AuthContext.Provider value={{ user, profile, isLoading, signUp, signIn, signOut, resetPassword, reloadProfile }}>
       {children}
     </AuthContext.Provider>
   )

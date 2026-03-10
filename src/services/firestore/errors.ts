@@ -41,7 +41,7 @@ export function mapFirestoreError(operation: string, error: unknown): string {
       }
       return 'O Firestore recusou a operação devido a um pré-requisito não atendido.'
     case 'missing-family-group':
-      return 'Nenhum grupo familiar foi encontrado para este usuário. Finalize o bootstrap do grupo antes de continuar.'
+      return 'Você ainda não concluiu sua configuração inicial. Crie ou entre em um grupo familiar para continuar.'
     default:
       return `Falha ao ${operation} dados no Firestore: ${message}`
   }
