@@ -1,6 +1,6 @@
 import { createContext, useEffect, useState, useCallback, type ReactNode } from 'react'
 import type { UserProfile } from '@/types/database'
-import { ensureUserProfile, getUserProfile } from '@/services/firestore/family'
+import { ensureInitialFamilyBootstrap, getUserProfile } from '@/services/firestore/family'
 import {
   clearSession,
   fetchCurrentUser,
@@ -29,7 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   const hydrateProfile = useCallback(async (authUser: AuthUser) => {
-    await ensureUserProfile({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
+    await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
     const data = await getUserProfile(authUser.uid)
     setProfile(data)
   }, [])
