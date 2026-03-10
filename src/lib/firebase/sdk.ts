@@ -110,14 +110,20 @@ function createFirestoreClient(): FirestoreCompatInstance {
 
   const db = sdk.app().firestore() as FirestoreWithPersistence
 
+  // settings() must be called immediately after firestore() and before any
+  // other Firestore operation. Calling it later triggers:
+  // "You are overriding the original host"
+  // The {merge: true} flag prevents conflicts if settings were already applied.
   if (typeof db.settings === 'function' && sdk.firestore) {
     try {
-      db.settings({ cacheSizeBytes: sdk.firestore.CACHE_SIZE_UNLIMITED })
+      db.settings({ cacheSizeBytes: sdk.firestore.CACHE_SIZE_UNLIMITED, merge: true })
     } catch (settingsError) {
       console.warn('[firestore][sdk] falha ao configurar cacheSizeBytes.', settingsError)
     }
   }
 
+  // enablePersistence is the only persistence API available in the compat SDK.
+  // The modular API (persistentLocalCache) is not available via compat imports.
   if (typeof db.enablePersistence === 'function') {
     void db.enablePersistence({ synchronizeTabs: true }).catch((error) => {
       const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code: string }).code : 'unknown'
