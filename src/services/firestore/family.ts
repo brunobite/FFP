@@ -160,31 +160,57 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
 }
 
 export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
-  const profile = await ensureUserProfile(params)
-
-  if (!profile.familyGroupId) {
-    console.info(`[firestore][bootstrap] usuário ${params.uid} sem grupo familiar; estado inicial válido.`)
-    return
-  }
-
   const db = await getFirestoreClient()
-  const groupRef = db.doc(`family_groups/${profile.familyGroupId}`)
-  const groupSnapshot = await groupRef.get()
+  const profile = await ensureUserProfile(params)
+  const now = nowIso()
+  let familyGroupId = profile.familyGroupId
 
-  if (!groupSnapshot.exists) {
-    console.warn(
-      `[firestore][bootstrap] grupo ${profile.familyGroupId} ausente para ${params.uid}; bootstrap não bloqueante e aguardando ação do usuário.`,
-    )
-    return
+  if (!familyGroupId) {
+    const existingMembership = await db.collection('family_members').where('uid', '==', params.uid).get()
+    const memberDoc = existingMembership.docs[0]
+    const memberData = (memberDoc?.data() || {}) as FamilyMemberDoc
+
+    if (memberData.familyGroupId) {
+      familyGroupId = memberData.familyGroupId
+      await (await getUserDocRef(params.uid)).set({ familyGroupId, updatedAt: now }, { merge: true })
+      console.info('[firestore][bootstrap] família recuperada a partir da membership existente', { uid: params.uid, familyGroupId })
+    }
   }
 
-  const memberRef = db.doc(`family_members/${params.uid}_${profile.familyGroupId}`)
+  if (!familyGroupId) {
+    const groupName = params.displayName?.trim() ? `Família de ${params.displayName.trim()}` : 'Minha Família'
+    const groupRef = await db.collection('family_groups').add({
+      name: groupName,
+      ownerUid: params.uid,
+      createdAt: now,
+      updatedAt: now,
+    })
+    familyGroupId = groupRef.id
+    await (await getUserDocRef(params.uid)).set({ familyGroupId, updatedAt: now }, { merge: true })
+    console.info('[firestore][bootstrap] novo grupo familiar criado automaticamente', { uid: params.uid, familyGroupId })
+  }
+
+  const groupRef = db.doc(`family_groups/${familyGroupId}`)
+  const groupSnapshot = await groupRef.get()
+  if (!groupSnapshot.exists) {
+    await groupRef.set(
+      {
+        name: params.displayName?.trim() ? `Família de ${params.displayName.trim()}` : 'Minha Família',
+        ownerUid: params.uid,
+        createdAt: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    )
+    console.warn('[firestore][bootstrap] grupo ausente foi recriado para manter consistência', { uid: params.uid, familyGroupId })
+  }
+
+  const memberRef = db.doc(`family_members/${params.uid}_${familyGroupId}`)
   const memberSnapshot = await memberRef.get()
   if (!memberSnapshot.exists) {
-    const now = nowIso()
     await memberRef.set(
       {
-        familyGroupId: profile.familyGroupId,
+        familyGroupId,
         uid: params.uid,
         role: 'owner' as FamilyRole,
         createdAt: now,
@@ -192,6 +218,7 @@ export async function ensureInitialFamilyBootstrap(params: { uid: string; email:
       },
       { merge: true },
     )
+    console.info('[firestore][bootstrap] membership do usuário criada automaticamente', { uid: params.uid, familyGroupId })
   }
 }
 

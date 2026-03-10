@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { LoadingScreen } from '@/components/ui'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from './ProtectedRoute'
+import { FamilySetupGate } from './FamilySetupGate'
 import { AuthLayout } from '@/pages/auth/AuthLayout'
 
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage').then((m) => ({ default: m.LoginPage })))
@@ -21,6 +22,7 @@ const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ defa
 const ImportsPage = lazy(() => import('@/pages/ImportsPage').then((m) => ({ default: m.ImportsPage })))
 const AlertsPage = lazy(() => import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const InitialSetupPage = lazy(() => import('@/pages/InitialSetupPage').then((m) => ({ default: m.InitialSetupPage })))
 
 export function AppRouter() {
   return (
@@ -36,20 +38,23 @@ export function AppRouter() {
         </Route>
 
         <Route element={<ProtectedRoute />}>
-          <Route element={<AppShell />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/lancamentos" element={<TransactionsPage />} />
-            <Route path="/receitas" element={<RevenuesPage />} />
-            <Route path="/despesas" element={<ExpensesPage />} />
-            <Route path="/contas" element={<AccountsPage />} />
-            <Route path="/cartoes" element={<CardsPage />} />
-            <Route path="/categorias" element={<CategoriesPage />} />
-            <Route path="/orcamentos" element={<BudgetsPage />} />
-            <Route path="/metas" element={<GoalsPage />} />
-            <Route path="/relatorios" element={<ReportsPage />} />
-            <Route path="/importacoes" element={<ImportsPage />} />
-            <Route path="/alertas" element={<AlertsPage />} />
-            <Route path="/configuracoes" element={<SettingsPage />} />
+          <Route element={<FamilySetupGate />}>
+            <Route element={<AppShell />}>
+              <Route path="/configuracao-inicial" element={<InitialSetupPage />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/lancamentos" element={<TransactionsPage />} />
+              <Route path="/receitas" element={<RevenuesPage />} />
+              <Route path="/despesas" element={<ExpensesPage />} />
+              <Route path="/contas" element={<AccountsPage />} />
+              <Route path="/cartoes" element={<CardsPage />} />
+              <Route path="/categorias" element={<CategoriesPage />} />
+              <Route path="/orcamentos" element={<BudgetsPage />} />
+              <Route path="/metas" element={<GoalsPage />} />
+              <Route path="/relatorios" element={<ReportsPage />} />
+              <Route path="/importacoes" element={<ImportsPage />} />
+              <Route path="/alertas" element={<AlertsPage />} />
+              <Route path="/configuracoes" element={<SettingsPage />} />
+            </Route>
           </Route>
         </Route>
 
