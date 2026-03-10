@@ -25,8 +25,9 @@ export function ForgotPasswordPage() {
       setError('')
       await resetPassword(data.email)
       setSuccess(true)
-    } catch {
-      setError('Erro ao enviar e-mail. Tente novamente.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao enviar e-mail. Tente novamente.'
+      setError(message)
     }
   }
 

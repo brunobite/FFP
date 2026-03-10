@@ -7,6 +7,14 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
+const missingConfig = Object.entries(firebaseConfig)
+  .filter(([, value]) => !value)
+  .map(([key]) => key)
+
+if (missingConfig.length > 0) {
+  console.warn(`[firebase] variáveis ausentes no build: ${missingConfig.join(', ')}`)
+}
+
 export const firebase = {
   ...firebaseConfig,
   identityBaseUrl: 'https://identitytoolkit.googleapis.com/v1',

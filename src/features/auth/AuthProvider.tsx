@@ -3,8 +3,8 @@ import type { UserProfile } from '@/types/database'
 import { ensureInitialFamilyBootstrap, getUserProfile } from '@/services/firestore/family'
 import {
   clearSession,
-  fetchCurrentUser,
   loadSession,
+  refreshSession,
   sendPasswordReset,
   signInWithEmail,
   signUpWithEmail,
@@ -29,9 +29,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   const hydrateProfile = useCallback(async (authUser: AuthUser) => {
-    await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
-    const data = await getUserProfile(authUser.uid)
-    setProfile(data)
+    try {
+      await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
+      const data = await getUserProfile(authUser.uid)
+      setProfile(data)
+    } catch (error) {
+      console.error('[auth] falha no bootstrap do perfil/família', error)
+      throw new Error('Autenticação concluída, mas falhou ao carregar os dados iniciais.')
+    }
   }, [])
 
   useEffect(() => {
@@ -43,17 +48,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const currentUser = await fetchCurrentUser(saved.idToken)
-        if (!currentUser) {
-          clearSession()
-          setIsLoading(false)
-          return
-        }
-
-        setUser({ ...saved, ...currentUser })
-        await hydrateProfile({ ...saved, ...currentUser })
-      } catch {
+        const currentUser = await refreshSession(saved)
+        setUser(currentUser)
+        await hydrateProfile(currentUser)
+      } catch (error) {
+        console.warn('[auth] sessão não pôde ser restaurada', error)
         clearSession()
+        setUser(null)
+        setProfile(null)
       } finally {
         setIsLoading(false)
       }
