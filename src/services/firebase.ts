@@ -8,16 +8,35 @@ export interface AuthUser {
   refreshToken: string
 }
 
-interface FirestoreDocument {
-  name: string
-  fields?: Record<string, unknown>
+interface FirebaseAuthErrorPayload {
+  error?: {
+    message?: string
+  }
+}
+
+interface RefreshTokenPayload {
+  id_token?: string
+  refresh_token?: string
+  user_id?: string
 }
 
 function parseFirebaseError(errorCode?: string) {
   switch (errorCode) {
     case 'EMAIL_NOT_FOUND':
     case 'INVALID_PASSWORD':
+    case 'INVALID_LOGIN_CREDENTIALS':
       return 'E-mail ou senha inválidos.'
+    case 'USER_DISABLED':
+      return 'Esta conta foi desativada.'
+    case 'TOO_MANY_ATTEMPTS_TRY_LATER':
+      return 'Muitas tentativas. Tente novamente mais tarde.'
+    case 'INVALID_ID_TOKEN':
+    case 'TOKEN_EXPIRED':
+      return 'Sua sessão expirou. Faça login novamente.'
+    case 'EMAIL_EXISTS':
+      return 'Este e-mail já está em uso.'
+    case 'WEAK_PASSWORD':
+      return 'A senha informada é fraca demais.'
     default:
       return 'Não foi possível concluir a autenticação agora.'
   }
@@ -25,12 +44,18 @@ function parseFirebaseError(errorCode?: string) {
 
 function buildAuthUser(payload: Record<string, string>): AuthUser {
   return {
-    uid: payload.localId || '',
+    uid: payload.localId || payload.user_id || '',
     email: payload.email || '',
     displayName: payload.displayName || 'Usuário',
-    idToken: payload.idToken || '',
-    refreshToken: payload.refreshToken || '',
+    idToken: payload.idToken || payload.id_token || '',
+    refreshToken: payload.refreshToken || payload.refresh_token || '',
   }
+}
+
+async function parseAuthError(response: Response) {
+  const data = (await response.json().catch(() => null)) as FirebaseAuthErrorPayload | null
+  const code = data?.error?.message ?? 'UNKNOWN'
+  return parseFirebaseError(code)
 }
 
 async function authRequest<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
@@ -40,24 +65,11 @@ async function authRequest<T>(endpoint: string, body: Record<string, unknown>): 
     body: JSON.stringify(body),
   })
 
-  const data = await response.json()
   if (!response.ok) {
-    const code = (data?.error?.message as string | undefined) ?? 'UNKNOWN'
-    throw new Error(parseFirebaseError(code))
+    throw new Error(await parseAuthError(response))
   }
-  return data as T
-}
 
-function parseStringField(field: unknown) {
-  if (field && typeof field === 'object' && 'stringValue' in field) {
-    return String((field as { stringValue: string }).stringValue)
-  }
-  return ''
-}
-
-function parseNullStringField(field: unknown) {
-  const value = parseStringField(field)
-  return value || null
+  return (await response.json()) as T
 }
 
 export function saveSession(user: AuthUser) {
@@ -108,18 +120,44 @@ export async function signUpWithEmail(email: string, password: string, displayNa
   return user
 }
 
-export async function fetchCurrentUser(idToken: string) {
-  const data = await authRequest<{ users: Array<Record<string, string>> }>('accounts:lookup', { idToken })
-  const first = data.users?.[0]
-  if (!first) return null
+export async function refreshSession(saved: AuthUser): Promise<AuthUser> {
+  if (!saved.refreshToken) {
+    throw new Error('Sessão inválida. Faça login novamente.')
+  }
 
-  return {
-    uid: first.localId,
-    email: first.email,
-    displayName: first.displayName || 'Usuário',
-    idToken,
-    refreshToken: '',
-  } as AuthUser
+  const response = await fetch(`https://securetoken.googleapis.com/v1/token?key=${firebase.apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(saved.refreshToken)}`,
+  })
+
+  if (!response.ok) {
+    clearSession()
+    throw new Error(await parseAuthError(response))
+  }
+
+  const tokenData = (await response.json()) as RefreshTokenPayload
+  const nextUser: AuthUser = {
+    ...saved,
+    uid: tokenData.user_id || saved.uid,
+    idToken: tokenData.id_token || saved.idToken,
+    refreshToken: tokenData.refresh_token || saved.refreshToken,
+  }
+
+  const lookup = await authRequest<{ users: Array<Record<string, string>> }>('accounts:lookup', { idToken: nextUser.idToken })
+  const first = lookup.users?.[0]
+  if (!first) {
+    throw new Error('Não foi possível restaurar a sessão do usuário.')
+  }
+
+  const hydrated = {
+    ...nextUser,
+    email: first.email || nextUser.email,
+    displayName: first.displayName || nextUser.displayName || 'Usuário',
+  }
+
+  saveSession(hydrated)
+  return hydrated
 }
 
 export async function sendPasswordReset(email: string) {
@@ -127,53 +165,4 @@ export async function sendPasswordReset(email: string) {
     requestType: 'PASSWORD_RESET',
     email,
   })
-}
-
-function buildFields(values: Record<string, string | null>) {
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, { stringValue: value ?? '' }]),
-  )
-}
-
-export async function upsertUserProfile(params: { uid: string; email: string; displayName: string; idToken: string }) {
-  const endpoint = `${firebase.firestoreBaseUrl}/users/${params.uid}`
-
-  await fetch(endpoint, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${params.idToken}`,
-    },
-    body: JSON.stringify({
-      fields: buildFields({
-        uid: params.uid,
-        email: params.email,
-        displayName: params.displayName,
-        photoURL: null,
-        familyGroupId: null,
-        updatedAt: new Date().toISOString(),
-      }),
-    }),
-  })
-}
-
-export async function readUserProfile(uid: string, idToken: string) {
-  const response = await fetch(`${firebase.firestoreBaseUrl}/users/${uid}`, {
-    headers: { Authorization: `Bearer ${idToken}` },
-  })
-
-  if (!response.ok) return null
-
-  const data = (await response.json()) as FirestoreDocument
-  const fields = data.fields || {}
-
-  return {
-    uid,
-    email: parseStringField(fields.email),
-    displayName: parseStringField(fields.displayName) || 'Usuário',
-    photoURL: parseNullStringField(fields.photoURL),
-    familyGroupId: parseNullStringField(fields.familyGroupId),
-    createdAt: parseStringField(fields.createdAt) || new Date().toISOString(),
-    updatedAt: parseStringField(fields.updatedAt) || new Date().toISOString(),
-  }
 }

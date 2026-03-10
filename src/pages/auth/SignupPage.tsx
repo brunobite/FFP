@@ -25,8 +25,9 @@ export function SignupPage() {
       setError('')
       await signUp(data.email, data.password, data.full_name)
       navigate('/')
-    } catch {
-      setError('Erro ao criar conta. Tente novamente.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao criar conta. Tente novamente.'
+      setError(message)
     }
   }
 

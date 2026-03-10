@@ -25,8 +25,9 @@ export function LoginPage() {
       setError('')
       await signIn(data.email, data.password)
       navigate('/dashboard')
-    } catch {
-      setError('E-mail ou senha incorretos.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro inesperado ao autenticar.'
+      setError(message)
     }
   }
 
