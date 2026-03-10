@@ -4,6 +4,7 @@ import { Users } from 'lucide-react'
 import { Button, Card, CardContent, Input } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { createFamilyGroup } from '@/services/firestore/family'
+import { mapFirestoreError } from '@/services/firestore/errors'
 
 export function InitialSetupPage() {
   const { user, reloadProfile } = useAuth()
@@ -23,7 +24,7 @@ export function InitialSetupPage() {
       await reloadProfile()
       navigate('/dashboard', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível concluir a configuração inicial.')
+      setError(mapFirestoreError('concluir a configuração inicial', err))
     } finally {
       setIsSubmitting(false)
     }

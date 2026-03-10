@@ -1,6 +1,7 @@
 import { createContext, useEffect, useState, useCallback, type ReactNode } from 'react'
 import type { UserProfile } from '@/types/database'
 import { ensureInitialFamilyBootstrap, getUserProfile } from '@/services/firestore/family'
+import { isFirestoreOfflineError } from '@/services/firestore/errors'
 import {
   clearSession,
   loadSession,
@@ -32,10 +33,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hydrateProfile = useCallback(async (authUser: AuthUser) => {
     try {
       await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
+    } catch (error) {
+      if (isFirestoreOfflineError(error)) {
+        console.info('[firestore][auth] bootstrap remoto indisponível no momento; mantendo fluxo com cache/local.', error)
+      } else {
+        console.error('[firestore][auth] falha no bootstrap do perfil/família (não bloqueante)', error)
+      }
+    }
+
+    try {
       const data = await getUserProfile(authUser.uid)
       setProfile(data)
     } catch (error) {
-      console.error('[firestore][auth] falha no bootstrap do perfil/família (não bloqueante)', error)
+      if (isFirestoreOfflineError(error)) {
+        console.info('[firestore][auth] leitura de perfil indisponível por rede/offline; sem bloqueio de navegação.', error)
+      } else {
+        console.error('[firestore][auth] falha ao carregar perfil do usuário (não bloqueante)', error)
+      }
       setProfile(null)
     }
   }, [])

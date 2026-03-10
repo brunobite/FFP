@@ -109,7 +109,7 @@ function createFirestoreClient(): FirestoreCompatInstance {
   const db = sdk.app().firestore() as FirestoreWithPersistence
 
   if (typeof db.enablePersistence === 'function') {
-    void db.enablePersistence({ synchronizeTabs: true }).catch((error) => {
+    void db.enablePersistence().catch((error) => {
       const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code: string }).code : 'unknown'
       if (code === 'failed-precondition') {
         console.warn('[firestore][sdk] persistência local não habilitada (múltiplas abas abertas).')
@@ -154,9 +154,9 @@ function createFirestoreClient(): FirestoreCompatInstance {
       },
     }),
     doc: (path: string) => ({
-      get: async () => {
+      get: async (options) => {
         try {
-          const snapshot = await db.doc(path).get()
+          const snapshot = await db.doc(path).get(options)
           return {
             exists: snapshot.exists,
             id: snapshot.id,
