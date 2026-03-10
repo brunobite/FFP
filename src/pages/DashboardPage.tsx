@@ -18,6 +18,7 @@ interface DashboardData {
   goalsCount: number
   budgetUsedPercent: number
   hasAnyData: boolean
+  recentTransactions: Array<{ id: string; description: string; amount: number; type: 'income' | 'expense'; date: string }>
 }
 
 function SummaryCard({ title, value, hint, icon: Icon, iconColor }: SummaryCardProps) {
@@ -49,11 +50,12 @@ export function DashboardPage() {
     goalsCount: 0,
     budgetUsedPercent: 0,
     hasAnyData: false,
+    recentTransactions: [],
   })
 
   useEffect(() => {
     if (!user?.uid) {
-      setDashboard({ revenuesTotal: 0, expensesTotal: 0, goalsCount: 0, budgetUsedPercent: 0, hasAnyData: false })
+      setDashboard({ revenuesTotal: 0, expensesTotal: 0, goalsCount: 0, budgetUsedPercent: 0, hasAnyData: false, recentTransactions: [] })
       return
     }
 
@@ -70,6 +72,7 @@ export function DashboardPage() {
         goalsCount: result.goalsCount,
         budgetUsedPercent: result.budgetUsedPercent,
         hasAnyData: result.hasAnyData,
+        recentTransactions: result.recentTransactions,
       })
 
       if (result.diagnostics.length > 0) {
@@ -103,14 +106,14 @@ export function DashboardPage() {
       {
         title: 'Orçamento utilizado',
         value: `${dashboard.budgetUsedPercent.toFixed(0)}%`,
-        hint: dashboard.budgetUsedPercent > 0 ? 'Percentual calculado sobre os limites criados' : 'Defina seus primeiros limites',
+        hint: 'Placeholder até o módulo de orçamento do Bloco 3',
         icon: Wallet,
         iconColor: 'text-info',
       },
       {
         title: 'Metas em andamento',
         value: String(dashboard.goalsCount),
-        hint: dashboard.goalsCount > 0 ? 'Metas em acompanhamento' : 'Crie metas para a família',
+        hint: 'Placeholder até o módulo de metas do Bloco 3',
         icon: Goal,
         iconColor: 'text-warning',
       },
@@ -138,21 +141,33 @@ export function DashboardPage() {
             {!dashboard.hasAnyData ? (
               <EmptyState
                 title="Sem lançamentos ainda"
-                description="Quando receitas e despesas forem registradas, este painel mostrará a evolução mensal."
+                description="Quando receitas e despesas forem registradas, este painel mostrará os movimentos mais recentes do mês."
               />
-            ) : null}
+            ) : (
+              <ul className="space-y-2">
+                {dashboard.recentTransactions.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
+                    <div>
+                      <p className="font-medium text-text-primary">{item.description}</p>
+                      <p className="text-xs text-text-secondary">{new Date(`${item.date}T00:00:00`).toLocaleDateString('pt-BR')}</p>
+                    </div>
+                    <span className={item.type === 'income' ? 'font-semibold text-success' : 'font-semibold text-danger'}>
+                      {item.type === 'income' ? '+' : '-'} {formatCurrency(item.amount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="space-y-4 py-5">
             <h2 className="text-lg font-semibold text-text-primary">Orçamentos e metas</h2>
-            {!dashboard.hasAnyData ? (
-              <EmptyState
-                title="Nenhum orçamento ativo"
-                description="Crie um orçamento e metas familiares para acompanhar progresso por categoria."
-              />
-            ) : null}
+            <EmptyState
+              title="Módulos em preparação"
+              description="Orçamentos e metas permanecem como placeholder neste bloco, mantendo o dashboard pronto para evolução."
+            />
           </CardContent>
         </Card>
       </section>
