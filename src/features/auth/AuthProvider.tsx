@@ -34,8 +34,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await getUserProfile(authUser.uid)
       setProfile(data)
     } catch (error) {
-      console.error('[auth] falha no bootstrap do perfil/família', error)
-      throw new Error('Autenticação concluída, mas falhou ao carregar os dados iniciais.')
+      console.error('[firestore][auth] falha no bootstrap do perfil/família (não bloqueante)', error)
+      setProfile(null)
     }
   }, [])
 

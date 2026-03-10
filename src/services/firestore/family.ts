@@ -1,60 +1,38 @@
-import { firebase } from '@/lib/firebase/config'
+import { getFirestoreClient } from '@/lib/firebase/sdk'
 import { loadSession } from '@/services/firebase'
 import type { FamilyGroup, FamilyMember, FamilyRole, UserProfile } from '@/types/database'
 
-interface FirestoreErrorPayload {
-  error?: {
-    code?: number
-    message?: string
-    status?: string
-  }
+interface ProfileDoc {
+  uid?: string
+  email?: string
+  displayName?: string
+  photoURL?: string | null
+  familyGroupId?: string | null
+  createdAt?: string
+  updatedAt?: string
 }
 
-interface FirestoreDocumentResponse {
+interface FamilyGroupDoc {
   name?: string
-  fields?: Record<string, unknown>
+  ownerUid?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
-function field(value: string) {
-  return { stringValue: value }
+interface FamilyMemberDoc {
+  familyGroupId?: string
+  uid?: string
+  role?: FamilyRole
+  createdAt?: string
+  updatedAt?: string
 }
 
-function parseField(value: unknown) {
-  if (value && typeof value === 'object' && 'stringValue' in value) {
-    return String((value as { stringValue: string }).stringValue)
-  }
-  return ''
-}
-
-function parseDocumentId(name?: string) {
-  return name?.split('/').pop() || ''
-}
-
-function getToken() {
-  const session = loadSession()
-  if (!session?.idToken) throw new Error('Usuário não autenticado')
-  return session.idToken
-}
-
-export function getFirestoreBaseUrl() {
-  if (!firebase.projectId) {
-    throw new Error('Configuração do Firebase inválida: VITE_FIREBASE_PROJECT_ID não definido no build.')
-  }
-
-  return firebase.firestoreBaseUrl
-}
-
-function buildDocumentPath(path: string) {
-  const normalized = path.trim().replace(/^\/+/, '')
-  if (!normalized) {
-    throw new Error('Tentativa de consultar caminho vazio no Firestore.')
-  }
-
-  return `${getFirestoreBaseUrl()}/${normalized}`
+function nowIso() {
+  return new Date().toISOString()
 }
 
 function createDefaultProfile(params: { uid: string; email: string; displayName?: string | null }): UserProfile {
-  const now = new Date().toISOString()
+  const now = nowIso()
   return {
     uid: params.uid,
     email: params.email,
@@ -66,277 +44,194 @@ function createDefaultProfile(params: { uid: string; email: string; displayName?
   }
 }
 
-async function authorizedFetch(url: string, init?: RequestInit) {
-  const token = getToken()
-  return fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers || {}),
-    },
-  })
-}
-
-async function parseFirestoreError(response: Response) {
-  const payload = (await response.json().catch(() => null)) as FirestoreErrorPayload | null
-  return payload?.error?.message || `Erro Firestore ${response.status}`
-}
-
-async function getDocument(path: string): Promise<FirestoreDocumentResponse | null> {
-  const response = await authorizedFetch(buildDocumentPath(path))
-  if (response.status === 404) return null
-  if (!response.ok) {
-    throw new Error(`Falha ao buscar documento ${path}: ${await parseFirestoreError(response)}`)
-  }
-
-  return (await response.json()) as FirestoreDocumentResponse
-}
-
-async function patchDocument(path: string, fields: Record<string, unknown>, updateMask?: string[]) {
-  const params =
-    updateMask && updateMask.length > 0
-      ? `?${updateMask.map((fieldPath) => `updateMask.fieldPaths=${encodeURIComponent(fieldPath)}`).join('&')}`
-      : ''
-
-  return authorizedFetch(`${buildDocumentPath(path)}${params}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ fields }),
-  })
-}
-
-export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
-  const existing = await getUserProfile(params.uid)
-  if (existing) {
-    const nextDisplayName = params.displayName || existing.displayName || 'Usuário'
-    const shouldUpdate = existing.email !== params.email || existing.displayName !== nextDisplayName
-
-    if (!shouldUpdate) {
-      return existing
-    }
-
-    const response = await patchDocument(
-      `users/${params.uid}`,
-      {
-        email: field(params.email),
-        displayName: field(nextDisplayName),
-        updatedAt: field(new Date().toISOString()),
-      },
-      ['email', 'displayName', 'updatedAt'],
-    )
-
-    if (!response.ok) {
-      throw new Error(`Não foi possível atualizar perfil do usuário: ${await parseFirestoreError(response)}`)
-    }
-
-    return (await getUserProfile(params.uid)) ?? createDefaultProfile(params)
-  }
-
-  const now = new Date().toISOString()
-  const response = await patchDocument(`users/${params.uid}`, {
-    uid: field(params.uid),
-    email: field(params.email),
-    displayName: field(params.displayName ?? 'Usuário'),
-    photoURL: field(''),
-    familyGroupId: field(''),
-    createdAt: field(now),
-    updatedAt: field(now),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Não foi possível inicializar perfil do usuário: ${await parseFirestoreError(response)}`)
-  }
-
+function normalizeProfile(uid: string, data: ProfileDoc | undefined, fallback?: { email?: string; displayName?: string | null }): UserProfile {
+  const now = nowIso()
   return {
-    ...createDefaultProfile(params),
-    createdAt: now,
-    updatedAt: now,
+    uid,
+    email: data?.email || fallback?.email || '',
+    displayName: data?.displayName || fallback?.displayName || 'Usuário',
+    photoURL: data?.photoURL || null,
+    familyGroupId: data?.familyGroupId || null,
+    createdAt: data?.createdAt || now,
+    updatedAt: data?.updatedAt || now,
   }
+}
+
+async function getUserDocRef(uid: string) {
+  const db = await getFirestoreClient()
+  return db.doc(`users/${uid}`)
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
-  const response = await authorizedFetch(buildDocumentPath(`users/${uid}`))
-  if (response.status === 404) return null
-  if (!response.ok) return null
-
-  const data = (await response.json()) as { fields?: Record<string, unknown> }
-  const fields = data.fields || {}
-
-  return {
-    uid,
-    email: parseField(fields.email),
-    displayName: parseField(fields.displayName) || 'Usuário',
-    photoURL: parseField(fields.photoURL) || null,
-    familyGroupId: parseField(fields.familyGroupId) || null,
-    createdAt: parseField(fields.createdAt) || new Date().toISOString(),
-    updatedAt: parseField(fields.updatedAt) || new Date().toISOString(),
+  const userRef = await getUserDocRef(uid)
+  const snapshot = await userRef.get()
+  if (!snapshot.exists) {
+    return null
   }
+
+  return normalizeProfile(uid, snapshot.data() as ProfileDoc | undefined)
+}
+
+export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
+  const userRef = await getUserDocRef(params.uid)
+  const existing = await userRef.get()
+
+  if (!existing.exists) {
+    const base = createDefaultProfile(params)
+    await userRef.set({
+      ...base,
+      displayName: params.displayName ?? 'Usuário',
+      photoURL: null,
+      familyGroupId: null,
+    })
+    return base
+  }
+
+  const current = normalizeProfile(params.uid, existing.data() as ProfileDoc | undefined, params)
+  const nextDisplayName = params.displayName || current.displayName || 'Usuário'
+
+  const updates: Partial<UserProfile> = {}
+  if (current.email !== params.email) updates.email = params.email
+  if (current.displayName !== nextDisplayName) updates.displayName = nextDisplayName
+
+  if (Object.keys(updates).length > 0) {
+    await userRef.set(
+      {
+        ...updates,
+        updatedAt: nowIso(),
+      },
+      { merge: true },
+    )
+  }
+
+  const refreshed = await userRef.get()
+  return normalizeProfile(params.uid, refreshed.data() as ProfileDoc | undefined, params)
 }
 
 export async function createFamilyGroup(params: { uid: string; name: string }) {
-  const profile = await getUserProfile(params.uid)
-  if (!profile) {
-    const session = loadSession()
-    if (!session?.email) {
-      throw new Error('Não foi possível criar grupo familiar sem perfil válido.')
-    }
-
-    await ensureUserProfile({
-      uid: params.uid,
-      email: session.email,
-      displayName: session.displayName,
-    })
+  const session = loadSession()
+  if (!session?.email) {
+    throw new Error('[firestore] sessão inválida para criar família.')
   }
 
-  const latestProfile = (await getUserProfile(params.uid)) ?? null
+  const profile = await ensureUserProfile({
+    uid: params.uid,
+    email: session.email,
+    displayName: session.displayName,
+  })
 
-  if (latestProfile?.familyGroupId) {
+  if (profile.familyGroupId) {
     const existingFamily = await getFamilyByUser(params.uid)
     if (existingFamily.group) {
-      console.info(`[family] usuário ${params.uid} já possui grupo ${existingFamily.group.id}; criação ignorada.`)
+      console.info(`[firestore][family] usuário ${params.uid} já possui grupo ${existingFamily.group.id}; criação ignorada.`)
       return existingFamily.group.id
     }
   }
 
-  const now = new Date().toISOString()
-  const groupResponse = await authorizedFetch(buildDocumentPath('family_groups'), {
-    method: 'POST',
-    body: JSON.stringify({
-      fields: {
-        name: field(params.name),
-        ownerUid: field(params.uid),
-        createdAt: field(now),
-        updatedAt: field(now),
-      },
-    }),
+  const db = await getFirestoreClient()
+  const now = nowIso()
+  const groupRef = await db.collection('family_groups').add({
+    name: params.name,
+    ownerUid: params.uid,
+    createdAt: now,
+    updatedAt: now,
   })
 
-  if (!groupResponse.ok) {
-    throw new Error(`Não foi possível criar grupo familiar: ${await parseFirestoreError(groupResponse)}`)
-  }
-
-  const groupData = (await groupResponse.json()) as { name: string }
-  const groupId = parseDocumentId(groupData.name)
-
-  const memberResponse = await patchDocument(`family_members/${params.uid}_${groupId}`, {
-    familyGroupId: field(groupId),
-    uid: field(params.uid),
-    role: field('owner'),
-    createdAt: field(now),
-    updatedAt: field(now),
-  })
-
-  if (!memberResponse.ok) {
-    throw new Error(`Não foi possível criar membro da família: ${await parseFirestoreError(memberResponse)}`)
-  }
-
-  const userResponse = await patchDocument(
-    `users/${params.uid}`,
+  await db.doc(`family_members/${params.uid}_${groupRef.id}`).set(
     {
-      familyGroupId: field(groupId),
-      updatedAt: field(now),
+      familyGroupId: groupRef.id,
+      uid: params.uid,
+      role: 'owner' as FamilyRole,
+      createdAt: now,
+      updatedAt: now,
     },
-    ['familyGroupId', 'updatedAt'],
+    { merge: true },
   )
 
-  if (!userResponse.ok) {
-    throw new Error(`Não foi possível vincular usuário ao grupo: ${await parseFirestoreError(userResponse)}`)
-  }
+  await (await getUserDocRef(params.uid)).set(
+    {
+      familyGroupId: groupRef.id,
+      updatedAt: now,
+    },
+    { merge: true },
+  )
 
-  return groupId
+  return groupRef.id
 }
 
 export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
   const profile = await ensureUserProfile(params)
+
   if (!profile.familyGroupId) {
-    console.info(`[bootstrap] usuário ${params.uid} sem grupo familiar; mantendo estado inicial válido.`)
+    console.info(`[firestore][bootstrap] usuário ${params.uid} sem grupo familiar; estado inicial válido.`)
     return
   }
 
-  const family = await getFamilyByUser(params.uid)
-  if (!family.group) {
-    console.warn(`[bootstrap] grupo ${profile.familyGroupId} ausente para ${params.uid}; aguardando recriação explícita.`)
+  const db = await getFirestoreClient()
+  const groupRef = db.doc(`family_groups/${profile.familyGroupId}`)
+  const groupSnapshot = await groupRef.get()
+
+  if (!groupSnapshot.exists) {
+    console.warn(
+      `[firestore][bootstrap] grupo ${profile.familyGroupId} ausente para ${params.uid}; bootstrap não bloqueante e aguardando ação do usuário.`,
+    )
     return
   }
 
-  if (family.members.length === 0) {
-    console.warn(`[bootstrap] grupo ${profile.familyGroupId} sem membros; criando vínculo do proprietário.`)
-    const memberResponse = await patchDocument(`family_members/${params.uid}_${profile.familyGroupId}`, {
-      familyGroupId: field(profile.familyGroupId),
-      uid: field(params.uid),
-      role: field('owner'),
-      createdAt: field(new Date().toISOString()),
-      updatedAt: field(new Date().toISOString()),
-    })
-
-    if (!memberResponse.ok) {
-      throw new Error(`Falha ao reconstituir membro proprietário: ${await parseFirestoreError(memberResponse)}`)
-    }
+  const memberRef = db.doc(`family_members/${params.uid}_${profile.familyGroupId}`)
+  const memberSnapshot = await memberRef.get()
+  if (!memberSnapshot.exists) {
+    const now = nowIso()
+    await memberRef.set(
+      {
+        familyGroupId: profile.familyGroupId,
+        uid: params.uid,
+        role: 'owner' as FamilyRole,
+        createdAt: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    )
   }
 }
 
 export async function getFamilyByUser(uid: string): Promise<{ group: FamilyGroup | null; members: FamilyMember[] }> {
   const profile = await getUserProfile(uid)
-  if (!profile) {
-    console.info(`[family] perfil não encontrado para uid=${uid}; retornando estado vazio.`)
+
+  if (!profile || !profile.familyGroupId) {
     return { group: null, members: [] }
   }
 
-  if (!profile.familyGroupId) {
-    console.info(`[family] usuário ${uid} sem familyGroupId; retornando estado inicial.`)
+  const db = await getFirestoreClient()
+  const groupSnapshot = await db.doc(`family_groups/${profile.familyGroupId}`).get()
+
+  if (!groupSnapshot.exists) {
+    console.warn(`[firestore][family] grupo familiar não encontrado para familyGroupId=${profile.familyGroupId}`)
     return { group: null, members: [] }
   }
 
-  const groupData = await getDocument(`family_groups/${profile.familyGroupId}`)
-  if (!groupData) {
-    console.warn(`[family] grupo familiar não encontrado para familyGroupId=${profile.familyGroupId}`)
-    return { group: null, members: [] }
-  }
-  const groupFields = groupData.fields || {}
+  const groupDoc = (groupSnapshot.data() || {}) as FamilyGroupDoc
+  const membersSnapshot = await db.collection('family_members').where('familyGroupId', '==', profile.familyGroupId).get()
 
-  const memberResponse = await authorizedFetch(`${getFirestoreBaseUrl()}:runQuery`, {
-    method: 'POST',
-    body: JSON.stringify({
-      structuredQuery: {
-        from: [{ collectionId: 'family_members' }],
-        where: {
-          fieldFilter: {
-            field: { fieldPath: 'familyGroupId' },
-            op: 'EQUAL',
-            value: field(profile.familyGroupId),
-          },
-        },
-      },
-    }),
+  const members: FamilyMember[] = membersSnapshot.docs.map((member) => {
+    const data = (member.data() || {}) as FamilyMemberDoc
+    return {
+      id: member.id,
+      familyGroupId: data.familyGroupId || profile.familyGroupId!,
+      uid: data.uid || '',
+      role: data.role || 'member',
+      createdAt: data.createdAt || nowIso(),
+      updatedAt: data.updatedAt || nowIso(),
+    }
   })
-
-  if (!memberResponse.ok) {
-    throw new Error(`Falha ao carregar membros da família: ${await parseFirestoreError(memberResponse)}`)
-  }
-
-  const memberJson = (await memberResponse.json()) as Array<{ document?: { name: string; fields?: Record<string, unknown> } }>
-  const members: FamilyMember[] = memberJson
-    .filter((item) => item.document)
-    .map((item) => {
-      const document = item.document!
-      const fields = document.fields || {}
-      return {
-        id: document.name.split('/').pop() || '',
-        familyGroupId: parseField(fields.familyGroupId),
-        uid: parseField(fields.uid),
-        role: (parseField(fields.role) as FamilyRole) || 'member',
-        createdAt: parseField(fields.createdAt),
-        updatedAt: parseField(fields.updatedAt),
-      }
-    })
 
   return {
     group: {
-      id: profile.familyGroupId,
-      name: parseField(groupFields.name) || 'Família',
-      ownerUid: parseField(groupFields.ownerUid),
-      createdAt: parseField(groupFields.createdAt),
-      updatedAt: parseField(groupFields.updatedAt),
+      id: groupSnapshot.id,
+      name: groupDoc.name || 'Família',
+      ownerUid: groupDoc.ownerUid || '',
+      createdAt: groupDoc.createdAt || nowIso(),
+      updatedAt: groupDoc.updatedAt || nowIso(),
     },
     members,
   }

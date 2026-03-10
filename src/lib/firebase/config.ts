@@ -18,7 +18,6 @@ if (missingConfig.length > 0) {
 export const firebase = {
   ...firebaseConfig,
   identityBaseUrl: 'https://identitytoolkit.googleapis.com/v1',
-  firestoreBaseUrl: `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`,
   storageBaseUrl: `https://firebasestorage.googleapis.com/v0/b/${firebaseConfig.storageBucket}`,
 }
 
