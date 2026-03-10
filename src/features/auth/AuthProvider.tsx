@@ -26,39 +26,103 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | null>(null)
 
+const MAX_OFFLINE_RETRIES = 3
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isOffline, setIsOffline] = useState(false)
 
-  const hydrateProfile = useCallback(async (authUser: AuthUser) => {
-    setIsOffline(false)
+  const hydrateInFlight = useRef<Promise<void> | null>(null)
+  const bootstrapCallCount = useRef(0)
+  const retryAttempts = useRef(0)
+  const retryTimer = useRef<number | null>(null)
+  const activeUid = useRef<string | null>(null)
 
-    try {
-      await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
-    } catch (error) {
-      if (isFirestoreOfflineError(error)) {
-        console.info('[firestore][auth] bootstrap remoto indisponível no momento; mantendo fluxo com cache/local.', error)
-        setIsOffline(true)
-      } else {
-        console.error('[firestore][auth] falha no bootstrap do perfil/família (não bloqueante)', error)
-      }
-    }
-
-    try {
-      const data = await getUserProfile(authUser.uid)
-      setProfile(data)
-    } catch (error) {
-      if (isFirestoreOfflineError(error)) {
-        console.info('[firestore][auth] leitura de perfil indisponível por rede/offline; sem bloqueio de navegação.', error)
-        setIsOffline(true)
-      } else {
-        console.error('[firestore][auth] falha ao carregar perfil do usuário (não bloqueante)', error)
-      }
-      setProfile(null)
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimer.current !== null) {
+      window.clearTimeout(retryTimer.current)
+      retryTimer.current = null
     }
   }, [])
+
+  const resetRetryState = useCallback(() => {
+    clearRetryTimer()
+    retryAttempts.current = 0
+  }, [clearRetryTimer])
+
+  const hydrateProfile = useCallback(
+    async (authUser: AuthUser, reason: 'bootstrap' | 'manual' | 'retry' = 'manual') => {
+      if (hydrateInFlight.current) {
+        console.info('[auth][bootstrap] reutilizando bootstrap em andamento', {
+          uid: authUser.uid,
+          reason,
+          online: navigator.onLine,
+          retries: retryAttempts.current,
+        })
+        return hydrateInFlight.current
+      }
+
+      const run = async () => {
+        bootstrapCallCount.current += 1
+        console.info('[auth][bootstrap] iniciado', {
+          count: bootstrapCallCount.current,
+          uid: authUser.uid,
+          reason,
+          online: navigator.onLine,
+        })
+
+        let hasOffline = false
+
+        try {
+          await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
+        } catch (error) {
+          if (isFirestoreOfflineError(error)) {
+            hasOffline = true
+            console.info('[firestore][auth] bootstrap remoto indisponível; fallback local mantido.', {
+              uid: authUser.uid,
+              online: navigator.onLine,
+              reason: (error as { message?: string })?.message,
+            })
+          } else {
+            console.error('[firestore][auth] falha no bootstrap do perfil/família (não bloqueante)', error)
+          }
+        }
+
+        try {
+          const data = await getUserProfile(authUser.uid)
+          setProfile(data)
+
+          if (!hasOffline) {
+            setIsOffline(false)
+            resetRetryState()
+          }
+        } catch (error) {
+          if (isFirestoreOfflineError(error)) {
+            hasOffline = true
+            console.info('[firestore][auth] leitura de perfil indisponível por rede/offline; sem bloqueio de navegação.', {
+              uid: authUser.uid,
+              online: navigator.onLine,
+              reason: (error as { message?: string })?.message,
+            })
+          } else {
+            console.error('[firestore][auth] falha ao carregar perfil do usuário (não bloqueante)', error)
+          }
+          setProfile(null)
+        }
+
+        setIsOffline(hasOffline)
+      }
+
+      hydrateInFlight.current = run().finally(() => {
+        hydrateInFlight.current = null
+      })
+
+      return hydrateInFlight.current
+    },
+    [resetRetryState],
+  )
 
   useEffect(() => {
     const bootstrapSession = async () => {
@@ -70,8 +134,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const currentUser = await refreshSession(saved)
+        activeUid.current = currentUser.uid
         setUser(currentUser)
-        await hydrateProfile(currentUser)
+        await hydrateProfile(currentUser, 'bootstrap')
       } catch (error) {
         console.warn('[auth] sessão não pôde ser restaurada', error)
         clearSession()
@@ -85,46 +150,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void bootstrapSession()
   }, [hydrateProfile])
 
-  const offlineRetries = useRef(0)
-  const MAX_OFFLINE_RETRIES = 3
-
   useEffect(() => {
-    if (!isOffline || !user) {
-      // Reset retry counter when we leave offline state or lose user
-      offlineRetries.current = 0
+    if (!user) {
+      activeUid.current = null
+      resetRetryState()
       return
     }
 
-    const handleOnline = () => {
-      offlineRetries.current = 0
-      console.info('[auth] conexão restabelecida — recarregando perfil.')
-      void hydrateProfile(user)
+    if (activeUid.current !== user.uid) {
+      activeUid.current = user.uid
+      resetRetryState()
+    }
+  }, [user, resetRetryState])
+
+  useEffect(() => {
+    if (!isOffline || !user) {
+      clearRetryTimer()
+      return
     }
 
-    // If navigator.onLine is already true, the 'online' event will never fire.
-    // Schedule an automatic retry with a limit to prevent infinite loops.
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-      if (offlineRetries.current >= MAX_OFFLINE_RETRIES) {
-        console.warn(`[auth] limite de ${MAX_OFFLINE_RETRIES} tentativas de reconexão atingido — aguardando evento online.`)
-        // Fall through to register the 'online' listener below instead of looping
-      } else {
-        const attempt = ++offlineRetries.current
-        const delay = Math.min(3000 * Math.pow(2, attempt - 1), 15000)
-        const retryTimer = setTimeout(() => {
-          console.info(`[auth] tentativa de reconexão ${attempt}/${MAX_OFFLINE_RETRIES}`)
-          void hydrateProfile(user)
-        }, delay)
-        return () => clearTimeout(retryTimer)
+    const scheduleRetry = () => {
+      if (retryTimer.current !== null) return
+      if (retryAttempts.current >= MAX_OFFLINE_RETRIES) {
+        console.warn(`[auth] limite de ${MAX_OFFLINE_RETRIES} tentativas de reconexão atingido; aguardando evento online.`, {
+          uid: user.uid,
+          online: navigator.onLine,
+        })
+        return
       }
+
+      const attempt = retryAttempts.current + 1
+      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 15000)
+      retryTimer.current = window.setTimeout(() => {
+        retryTimer.current = null
+        retryAttempts.current = attempt
+        console.info(`[auth] tentativa de reconexão ${attempt}/${MAX_OFFLINE_RETRIES}`, {
+          uid: user.uid,
+          online: navigator.onLine,
+        })
+        void hydrateProfile(user, 'retry')
+      }, delay)
+    }
+
+    const handleOnline = () => {
+      console.info('[auth] conexão restabelecida — recarregando perfil.', {
+        uid: user.uid,
+        retries: retryAttempts.current,
+      })
+      resetRetryState()
+      void hydrateProfile(user, 'retry')
+    }
+
+    if (navigator.onLine) {
+      scheduleRetry()
     }
 
     window.addEventListener('online', handleOnline)
-    return () => window.removeEventListener('online', handleOnline)
-  }, [isOffline, user, hydrateProfile])
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      clearRetryTimer()
+    }
+  }, [clearRetryTimer, hydrateProfile, isOffline, resetRetryState, user])
 
   const signUp = useCallback(
     async (email: string, password: string, fullName: string) => {
       const account = await signUpWithEmail(email, password, fullName)
+      activeUid.current = account.uid
       setUser(account)
       await hydrateProfile(account)
     },
@@ -134,6 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(
     async (email: string, password: string) => {
       const account = await signInWithEmail(email, password)
+      activeUid.current = account.uid
       setUser(account)
       await hydrateProfile(account)
     },
@@ -142,9 +234,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     clearSession()
+    resetRetryState()
+    setIsOffline(false)
     setUser(null)
     setProfile(null)
-  }, [])
+  }, [resetRetryState])
 
   const resetPassword = useCallback(async (email: string) => {
     await sendPasswordReset(email)
@@ -152,7 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const reloadProfile = useCallback(async () => {
     if (!user) return
-    await hydrateProfile(user)
+    await hydrateProfile(user, 'manual')
   }, [hydrateProfile, user])
 
   return (

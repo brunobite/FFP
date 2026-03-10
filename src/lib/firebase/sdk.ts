@@ -7,9 +7,9 @@ type FirestoreCompatInstance = {
   collection: (path: string) => {
     add: (data: Record<string, unknown>) => Promise<{ id: string }>
     where: (fieldPath: string, opStr: string, value: unknown) => {
-      get: () => Promise<QuerySnapshot>
+      get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<QuerySnapshot>
     }
-    get: () => Promise<QuerySnapshot>
+    get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<QuerySnapshot>
   }
   doc: (path: string) => {
     get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<DocumentSnapshot>
@@ -19,43 +19,35 @@ type FirestoreCompatInstance = {
   }
 }
 
-type FirestoreDoc = { id: string; data: () => Record<string, unknown> }
-type RawDocSnapshot = { exists: boolean; id: string; data: () => Record<string, unknown> | undefined }
-type RawQuerySnapshot = { docs: FirestoreDoc[] }
-
-type RawFirestoreClient = {
-  collection: (path: string) => {
-    add: (data: Record<string, unknown>) => Promise<{ id: string }>
-    where: (fieldPath: string, opStr: string, value: unknown) => { get: () => Promise<RawQuerySnapshot> }
-    get: () => Promise<RawQuerySnapshot>
-  }
-  doc: (path: string) => {
-    get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<RawDocSnapshot>
-    set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>
-    update: (data: Record<string, unknown>) => Promise<void>
-    delete: () => Promise<void>
-  }
+type FirestoreModule = {
+  CACHE_SIZE_UNLIMITED: number
+  collection: (db: unknown, path: string) => unknown
+  deleteDoc: (ref: unknown) => Promise<void>
+  doc: (db: unknown, path: string) => unknown
+  getDoc: (ref: unknown) => Promise<{ exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }>
+  getDocFromCache: (ref: unknown) => Promise<{ exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }>
+  getDocFromServer: (ref: unknown) => Promise<{ exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }>
+  getDocs: (query: unknown) => Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }>
+  getDocsFromCache: (query: unknown) => Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }>
+  getDocsFromServer: (query: unknown) => Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }>
+  initializeFirestore: (app: unknown, settings: Record<string, unknown>) => unknown
+  persistentLocalCache: (settings?: { tabManager?: unknown }) => unknown
+  persistentMultipleTabManager: () => unknown
+  query: (collectionRef: unknown, ...constraints: unknown[]) => unknown
+  setDoc: (docRef: unknown, data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>
+  updateDoc: (docRef: unknown, data: Record<string, unknown>) => Promise<void>
+  where: (fieldPath: string, opStr: string, value: unknown) => unknown
+  addDoc: (collectionRef: unknown, data: Record<string, unknown>) => Promise<{ id: string }>
 }
 
-type FirestoreWithPersistence = RawFirestoreClient & {
-  enablePersistence?: (settings?: { synchronizeTabs?: boolean }) => Promise<void>
-  settings?: (config: Record<string, unknown>) => void
-}
-
-type FirebaseCompatGlobal = {
-  apps: unknown[]
+type AppModule = {
+  getApps: () => unknown[]
+  getApp: () => unknown
   initializeApp: (config: Record<string, string | undefined>) => unknown
-  app: () => { firestore: () => RawFirestoreClient }
-  firestore?: { CACHE_SIZE_UNLIMITED: number }
-}
-
-declare global {
-  interface Window {
-    firebase?: FirebaseCompatGlobal
-  }
 }
 
 let clientPromise: Promise<FirestoreCompatInstance> | null = null
+let modulesPromise: Promise<{ app: AppModule; firestore: FirestoreModule }> | null = null
 
 function createFirestoreError(message: string, code: string) {
   const error = new Error(message) as Error & { code: string }
@@ -63,13 +55,21 @@ function createFirestoreError(message: string, code: string) {
   return error
 }
 
+async function loadFirebaseModules() {
+  if (!modulesPromise) {
+    const importFromUrl = new Function('url', 'return import(url)') as (url: string) => Promise<unknown>
+    modulesPromise = Promise.all([
+      importFromUrl('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
+      importFromUrl('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js'),
+    ]).then(([app, firestore]) => ({ app: app as AppModule, firestore: firestore as FirestoreModule }))
+  }
+
+  return modulesPromise
+}
+
 function assertFirebaseReady() {
   if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.appId) {
     throw createFirestoreError('Firebase não configurado corretamente. Verifique as variáveis VITE_FIREBASE_*.', 'failed-precondition')
-  }
-
-  if (!window.firebase) {
-    throw createFirestoreError('Firebase SDK Web não carregado no cliente. Verifique os scripts do index.html.', 'failed-precondition')
   }
 }
 
@@ -87,18 +87,27 @@ function mapError(error: unknown): never {
   throw createFirestoreError(message, code)
 }
 
-function mapQuerySnapshot(snapshot: RawQuerySnapshot): QuerySnapshot {
+function mapQuerySnapshot(snapshot: { docs: Array<{ id: string; data: () => Record<string, unknown> }> }): QuerySnapshot {
   return {
     docs: snapshot.docs.map((doc) => ({ id: doc.id, data: () => doc.data() })),
   }
 }
 
-function createFirestoreClient(): FirestoreCompatInstance {
+function mapDocumentSnapshot(snapshot: { exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }): DocumentSnapshot {
+  return {
+    exists: snapshot.exists(),
+    id: snapshot.id,
+    data: () => snapshot.data(),
+  }
+}
+
+async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
   assertFirebaseReady()
 
-  const sdk = window.firebase as FirebaseCompatGlobal
-  if (!sdk.apps.length) {
-    sdk.initializeApp({
+  const { app: appModule, firestore: firestoreModule } = await loadFirebaseModules()
+  const app = appModule.getApps().length
+    ? appModule.getApp()
+    : appModule.initializeApp({
       apiKey: firebaseConfig.apiKey,
       authDomain: firebaseConfig.authDomain,
       projectId: firebaseConfig.projectId,
@@ -106,104 +115,91 @@ function createFirestoreClient(): FirestoreCompatInstance {
       messagingSenderId: firebaseConfig.messagingSenderId,
       appId: firebaseConfig.appId,
     })
+
+  const db = firestoreModule.initializeFirestore(app, {
+    cacheSizeBytes: firestoreModule.CACHE_SIZE_UNLIMITED,
+    localCache: firestoreModule.persistentLocalCache({
+      tabManager: firestoreModule.persistentMultipleTabManager(),
+    }),
+  })
+
+  console.info('[firestore][sdk] cliente Firestore Web SDK inicializado (singleton/modular)')
+
+  const resolveDocRead = async (ref: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
+    if (source === 'server') return firestoreModule.getDocFromServer(ref)
+    if (source === 'cache') return firestoreModule.getDocFromCache(ref)
+    return firestoreModule.getDoc(ref)
   }
 
-  const db = sdk.app().firestore() as FirestoreWithPersistence
-
-  // settings() must be called immediately after firestore() and before any
-  // other Firestore operation. Calling it later triggers:
-  // "You are overriding the original host"
-  // The {merge: true} flag prevents conflicts if settings were already applied.
-  if (typeof db.settings === 'function' && sdk.firestore) {
-    try {
-      db.settings({ cacheSizeBytes: sdk.firestore.CACHE_SIZE_UNLIMITED, merge: true })
-    } catch (settingsError) {
-      console.warn('[firestore][sdk] falha ao configurar cacheSizeBytes.', settingsError)
-    }
+  const resolveQueryRead = async (queryRef: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
+    if (source === 'server') return firestoreModule.getDocsFromServer(queryRef)
+    if (source === 'cache') return firestoreModule.getDocsFromCache(queryRef)
+    return firestoreModule.getDocs(queryRef)
   }
-
-  // enablePersistence is the only persistence API available in the compat SDK.
-  // The modular API (persistentLocalCache) is not available via compat imports.
-  if (typeof db.enablePersistence === 'function') {
-    void db.enablePersistence({ synchronizeTabs: true }).catch((error) => {
-      const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code: string }).code : 'unknown'
-      if (code === 'failed-precondition') {
-        console.warn('[firestore][sdk] persistência local não habilitada (múltiplas abas abertas).')
-        return
-      }
-
-      if (code === 'unimplemented') {
-        console.warn('[firestore][sdk] persistência local indisponível neste navegador.')
-        return
-      }
-
-      console.warn('[firestore][sdk] falha ao habilitar persistência local.', error)
-    })
-  }
-
-  console.info('[firestore][sdk] cliente Firestore Web SDK inicializado')
 
   return {
-    collection: (path: string) => ({
-      add: async (data) => {
-        try {
-          return await db.collection(path).add(data)
-        } catch (error) {
-          mapError(error)
-        }
-      },
-      where: (fieldPath: string, opStr: string, value: unknown) => ({
-        get: async () => {
+    collection: (path: string) => {
+      const collectionRef = firestoreModule.collection(db, path)
+      return {
+        add: async (data) => {
           try {
-            return mapQuerySnapshot(await db.collection(path).where(fieldPath, opStr, value).get())
+            return await firestoreModule.addDoc(collectionRef, data)
           } catch (error) {
             mapError(error)
           }
         },
-      }),
-      get: async () => {
-        try {
-          return mapQuerySnapshot(await db.collection(path).get())
-        } catch (error) {
-          mapError(error)
-        }
-      },
-    }),
-    doc: (path: string) => ({
-      get: async (options) => {
-        try {
-          const snapshot = await db.doc(path).get(options)
-          return {
-            exists: snapshot.exists,
-            id: snapshot.id,
-            data: () => snapshot.data(),
+        where: (fieldPath: string, opStr: string, value: unknown) => ({
+          get: async (options) => {
+            try {
+              const queryRef = firestoreModule.query(collectionRef, firestoreModule.where(fieldPath, opStr, value))
+              return mapQuerySnapshot(await resolveQueryRead(queryRef, options?.source))
+            } catch (error) {
+              mapError(error)
+            }
+          },
+        }),
+        get: async (options) => {
+          try {
+            return mapQuerySnapshot(await resolveQueryRead(collectionRef, options?.source))
+          } catch (error) {
+            mapError(error)
           }
-        } catch (error) {
-          mapError(error)
-        }
-      },
-      set: async (data, options) => {
-        try {
-          await db.doc(path).set(data, options)
-        } catch (error) {
-          mapError(error)
-        }
-      },
-      update: async (data) => {
-        try {
-          await db.doc(path).update(data)
-        } catch (error) {
-          mapError(error)
-        }
-      },
-      delete: async () => {
-        try {
-          await db.doc(path).delete()
-        } catch (error) {
-          mapError(error)
-        }
-      },
-    }),
+        },
+      }
+    },
+    doc: (path: string) => {
+      const docRef = firestoreModule.doc(db, path)
+      return {
+        get: async (options) => {
+          try {
+            return mapDocumentSnapshot(await resolveDocRead(docRef, options?.source))
+          } catch (error) {
+            mapError(error)
+          }
+        },
+        set: async (data, options) => {
+          try {
+            await firestoreModule.setDoc(docRef, data, options)
+          } catch (error) {
+            mapError(error)
+          }
+        },
+        update: async (data) => {
+          try {
+            await firestoreModule.updateDoc(docRef, data)
+          } catch (error) {
+            mapError(error)
+          }
+        },
+        delete: async () => {
+          try {
+            await firestoreModule.deleteDoc(docRef)
+          } catch (error) {
+            mapError(error)
+          }
+        },
+      }
+    },
   }
 }
 
