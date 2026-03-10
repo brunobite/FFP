@@ -27,6 +27,7 @@ type FirestoreCompatInstance = {
     get: () => Promise<{ exists: boolean; id: string; data: () => Record<string, unknown> | undefined }>
     set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>
     update: (data: Record<string, unknown>) => Promise<void>
+    delete: () => Promise<void>
   }
 }
 

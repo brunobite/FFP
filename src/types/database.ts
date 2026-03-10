@@ -26,3 +26,56 @@ export interface FamilyMember {
   createdAt: string
   updatedAt: string
 }
+
+export interface FamilyMemberSummary {
+  uid: string
+  displayName: string
+  role: FamilyRole
+}
+
+export type CategoryType = 'income' | 'expense'
+
+export interface Category {
+  id: string
+  familyGroupId: string
+  name: string
+  type: CategoryType
+  color: string | null
+  icon: string | null
+  parentCategoryId: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type AccountType = 'checking' | 'wallet' | 'savings' | 'cash'
+
+export interface Account {
+  id: string
+  familyGroupId: string
+  name: string
+  type: AccountType
+  initialBalance: number
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type TransactionType = 'income' | 'expense'
+export type TransactionStatus = 'posted'
+
+export interface Transaction {
+  id: string
+  familyGroupId: string
+  type: TransactionType
+  description: string
+  amount: number
+  date: string
+  categoryId: string
+  accountId: string
+  memberUid: string
+  notes: string
+  status: TransactionStatus
+  createdAt: string
+  updatedAt: string
+}
