@@ -1,5 +1,6 @@
 import { getFirestoreClient } from '@/lib/firebase/sdk'
 import { getFamilyByUser } from '@/services/firestore/family'
+import { logFirestoreError, mapFirestoreError } from '@/services/firestore/errors'
 import type {
   Account,
   AccountType,
@@ -61,55 +62,65 @@ function toNumber(value: unknown) {
 }
 
 export async function listCategories(uid: string): Promise<Category[]> {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const snapshot = await db.collection('categories').where('familyGroupId', '==', familyGroupId).get()
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const snapshot = await db.collection('categories').where('familyGroupId', '==', familyGroupId).get()
 
-  return snapshot.docs
-    .map((doc) => {
-      const data = (doc.data() || {}) as CategoryDoc
-      return {
-        id: doc.id,
-        familyGroupId,
-        name: data.name || 'Categoria',
-        type: data.type === 'income' ? 'income' : 'expense',
-        color: data.color || null,
-        icon: data.icon || null,
-        parentCategoryId: data.parentCategoryId || null,
-        isActive: data.isActive ?? true,
-        createdAt: data.createdAt || nowIso(),
-        updatedAt: data.updatedAt || nowIso(),
-      } satisfies Category
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    return snapshot.docs
+      .map((doc) => {
+        const data = (doc.data() || {}) as CategoryDoc
+        return {
+          id: doc.id,
+          familyGroupId,
+          name: data.name || 'Categoria',
+          type: data.type === 'income' ? 'income' : 'expense',
+          color: data.color || null,
+          icon: data.icon || null,
+          parentCategoryId: data.parentCategoryId || null,
+          isActive: data.isActive ?? true,
+          createdAt: data.createdAt || nowIso(),
+          updatedAt: data.updatedAt || nowIso(),
+        } satisfies Category
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+  } catch (error) {
+    logFirestoreError('categories.list', error, { uid })
+    throw new Error(mapFirestoreError('carregar', error))
+  }
 }
 
 export async function upsertCategory(
   uid: string,
   payload: { id?: string; name: string; type: CategoryType; color?: string; icon?: string; parentCategoryId?: string | null; isActive?: boolean },
 ) {
-  const { familyGroupId } = await resolveFamilyGroupId(uid)
-  const db = await getFirestoreClient()
-  const now = nowIso()
+  try {
+    const { familyGroupId } = await resolveFamilyGroupId(uid)
+    const db = await getFirestoreClient()
+    const now = nowIso()
 
-  const base = {
-    familyGroupId,
-    name: payload.name.trim(),
-    type: payload.type,
-    color: payload.color?.trim() || null,
-    icon: payload.icon?.trim() || null,
-    parentCategoryId: payload.parentCategoryId || null,
-    isActive: payload.isActive ?? true,
-    updatedAt: now,
+    const base = {
+      familyGroupId,
+      name: payload.name.trim(),
+      type: payload.type,
+      color: payload.color?.trim() || null,
+      icon: payload.icon?.trim() || null,
+      parentCategoryId: payload.parentCategoryId || null,
+      isActive: payload.isActive ?? true,
+      updatedAt: now,
+    }
+
+    if (payload.id) {
+      await db.doc(`categories/${payload.id}`).set(base, { merge: true })
+      return payload.id
+    }
+
+    const created = await db.collection('categories').add({ ...base, createdAt: now })
+    return created.id
+  } catch (error) {
+    logFirestoreError('categories.upsert', error, { uid, categoryId: payload.id || null })
+    throw new Error(mapFirestoreError(payload.id ? 'atualizar' : 'salvar', error))
   }
-
-  if (payload.id) {
-    await db.doc(`categories/${payload.id}`).set(base, { merge: true })
-    return payload.id
-  }
-
-  const created = await db.collection('categories').add({ ...base, createdAt: now })
-  return created.id
 }
 
 export async function listAccounts(uid: string): Promise<Account[]> {

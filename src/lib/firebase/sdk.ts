@@ -16,6 +16,12 @@ type FirebaseCompat = {
 }
 
 type FirestoreCompatInstance = {
+  settings: (settings: {
+    experimentalAutoDetectLongPolling?: boolean
+    useFetchStreams?: boolean
+    ignoreUndefinedProperties?: boolean
+  }) => void
+  enableNetwork: () => Promise<void>
   collection: (path: string) => {
     add: (data: Record<string, unknown>) => Promise<{ id: string }>
     where: (fieldPath: string, opStr: string, value: unknown) => {
@@ -38,6 +44,7 @@ declare global {
 }
 
 let sdkPromise: Promise<FirestoreCompatInstance> | null = null
+let firestoreConfigured = false
 
 function appendScript(src: string) {
   return new Promise<void>((resolve, reject) => {
@@ -83,10 +90,27 @@ export async function getFirestoreClient(): Promise<FirestoreCompatInstance> {
         compat.app()
       }
 
-      return compat.firestore()
+      const db = compat.firestore()
+
+      if (!firestoreConfigured) {
+        db.settings({
+          experimentalAutoDetectLongPolling: true,
+          useFetchStreams: false,
+          ignoreUndefinedProperties: true,
+        })
+
+        try {
+          await db.enableNetwork()
+        } catch (error) {
+          console.warn('[firestore][sdk] falha ao forçar enableNetwork (não bloqueante)', error)
+        }
+
+        firestoreConfigured = true
+      }
+
+      return db
     })()
   }
 
   return sdkPromise
 }
-
