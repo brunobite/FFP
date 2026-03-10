@@ -65,15 +65,20 @@ async function getUserDocRef(uid: string) {
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const userRef = await getUserDocRef(uid)
-  let snapshot = await userRef.get()
+  let snapshot: Awaited<ReturnType<typeof userRef.get>>
 
-  if (!snapshot.exists) {
+  try {
+    snapshot = await userRef.get()
+  } catch (serverError) {
+    if (!isFirestoreOfflineError(serverError)) {
+      throw serverError
+    }
+    // Server unreachable — try reading from local cache
     try {
       snapshot = await userRef.get({ source: 'cache' })
     } catch (cacheError) {
-      if (!isFirestoreOfflineError(cacheError)) {
-        throw cacheError
-      }
+      // Cache also failed — propagate the original offline error
+      throw serverError
     }
   }
 
@@ -86,15 +91,18 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 
 export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
   const userRef = await getUserDocRef(params.uid)
-  let existing = await userRef.get()
+  let existing: Awaited<ReturnType<typeof userRef.get>>
 
-  if (!existing.exists) {
+  try {
+    existing = await userRef.get()
+  } catch (serverError) {
+    if (!isFirestoreOfflineError(serverError)) {
+      throw serverError
+    }
     try {
       existing = await userRef.get({ source: 'cache' })
-    } catch (cacheError) {
-      if (!isFirestoreOfflineError(cacheError)) {
-        throw cacheError
-      }
+    } catch {
+      throw serverError
     }
   }
 
