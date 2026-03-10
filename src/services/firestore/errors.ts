@@ -4,8 +4,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function getFirestoreErrorCode(error: unknown): string {
   if (!isRecord(error)) return 'unknown'
-  const code = typeof error.code === 'string' ? error.code : 'unknown'
-  return code
+  const rawCode = typeof error.code === 'string' ? error.code : 'unknown'
+  return rawCode.startsWith('firestore/') ? rawCode.replace('firestore/', '') : rawCode
 }
 
 export function isFirestoreOfflineError(error: unknown): boolean {
