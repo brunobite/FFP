@@ -28,6 +28,9 @@ interface FamilyMemberDoc {
   updatedAt?: string
 }
 
+const bootstrapInFlight = new Map<string, Promise<void>>()
+const bootstrapDone = new Set<string>()
+
 function nowIso() {
   return new Date().toISOString()
 }
@@ -63,50 +66,58 @@ async function getUserDocRef(uid: string) {
   return db.doc(`users/${uid}`)
 }
 
-export async function getUserProfile(uid: string): Promise<UserProfile | null> {
-  const userRef = await getUserDocRef(uid)
-  let snapshot: Awaited<ReturnType<typeof userRef.get>>
-
+async function readDocWithFallback<T extends { get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<unknown> }>(
+  ref: T,
+  label: string,
+) {
   try {
-    snapshot = await userRef.get()
+    const result = await ref.get({ source: 'server' })
+    console.info(`[firestore][read] ${label} via server`, { online: navigator.onLine })
+    return { result, source: 'server' as const }
   } catch (serverError) {
     if (!isFirestoreOfflineError(serverError)) {
       throw serverError
     }
-    // Server unreachable — try reading from local cache
+
+    console.info(`[firestore][read] ${label} fallback para cache por indisponibilidade remota`, {
+      online: navigator.onLine,
+      reason: (serverError as { message?: string })?.message,
+    })
+
     try {
-      snapshot = await userRef.get({ source: 'cache' })
-    } catch (cacheError) {
-      // Cache also failed — propagate the original offline error
-      throw serverError
-    }
-  }
-
-  if (!snapshot.exists) {
-    return null
-  }
-
-  return normalizeProfile(uid, snapshot.data() as ProfileDoc | undefined)
-}
-
-export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
-  const userRef = await getUserDocRef(params.uid)
-  let existing: Awaited<ReturnType<typeof userRef.get>>
-
-  try {
-    existing = await userRef.get()
-  } catch (serverError) {
-    if (!isFirestoreOfflineError(serverError)) {
-      throw serverError
-    }
-    try {
-      existing = await userRef.get({ source: 'cache' })
+      const result = await ref.get({ source: 'cache' })
+      console.info(`[firestore][read] ${label} via cache`, { online: navigator.onLine })
+      return { result, source: 'cache' as const }
     } catch {
       throw serverError
     }
   }
+}
 
-  if (!existing.exists) {
+export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  const userRef = await getUserDocRef(uid)
+  const { result: snapshot } = await readDocWithFallback(userRef, `users/${uid}`)
+  const typed = snapshot as Awaited<ReturnType<typeof userRef.get>>
+
+  if (!typed.exists) {
+    return null
+  }
+
+  return normalizeProfile(uid, typed.data() as ProfileDoc | undefined)
+}
+
+export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
+  const userRef = await getUserDocRef(params.uid)
+  const { result: existing } = await readDocWithFallback(userRef, `users/${params.uid}`)
+  const typedExisting = existing as Awaited<ReturnType<typeof userRef.get>>
+
+  if (!typedExisting.exists) {
+    if (!navigator.onLine) {
+      const err = new Error('Firestore indisponível no primeiro acesso sem cache local.') as Error & { code: string }
+      err.code = 'unavailable'
+      throw err
+    }
+
     const base = createDefaultProfile(params)
     await userRef.set({
       ...base,
@@ -117,7 +128,7 @@ export async function ensureUserProfile(params: { uid: string; email: string; di
     return base
   }
 
-  const current = normalizeProfile(params.uid, existing.data() as ProfileDoc | undefined, params)
+  const current = normalizeProfile(params.uid, typedExisting.data() as ProfileDoc | undefined, params)
   const nextDisplayName = params.displayName || current.displayName || 'Usuário'
 
   const updates: Partial<UserProfile> = {}
@@ -189,16 +200,14 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
   return groupRef.id
 }
 
-export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
+async function runInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
   const db = await getFirestoreClient()
-
-
   const profile = await ensureUserProfile(params)
   const now = nowIso()
   let familyGroupId = profile.familyGroupId
 
   if (!familyGroupId) {
-    const existingMembership = await db.collection('family_members').where('uid', '==', params.uid).get()
+    const existingMembership = await db.collection('family_members').where('uid', '==', params.uid).get({ source: 'server' })
     const memberDoc = existingMembership.docs[0]
     const memberData = (memberDoc?.data() || {}) as FamilyMemberDoc
 
@@ -215,8 +224,9 @@ export async function ensureInitialFamilyBootstrap(params: { uid: string; email:
   }
 
   const groupRef = db.doc(`family_groups/${familyGroupId}`)
-  const groupSnapshot = await groupRef.get()
-  if (!groupSnapshot.exists) {
+  const { result: groupSnapshot } = await readDocWithFallback(groupRef, `family_groups/${familyGroupId}`)
+  const typedGroup = groupSnapshot as Awaited<ReturnType<typeof groupRef.get>>
+  if (!typedGroup.exists && navigator.onLine) {
     await groupRef.set(
       {
         name: params.displayName?.trim() ? `Família de ${params.displayName.trim()}` : 'Minha Família',
@@ -230,8 +240,9 @@ export async function ensureInitialFamilyBootstrap(params: { uid: string; email:
   }
 
   const memberRef = db.doc(`family_members/${params.uid}_${familyGroupId}`)
-  const memberSnapshot = await memberRef.get()
-  if (!memberSnapshot.exists) {
+  const { result: memberSnapshot } = await readDocWithFallback(memberRef, `family_members/${params.uid}_${familyGroupId}`)
+  const typedMember = memberSnapshot as Awaited<ReturnType<typeof memberRef.get>>
+  if (!typedMember.exists && navigator.onLine) {
     await memberRef.set(
       {
         familyGroupId,
@@ -244,6 +255,28 @@ export async function ensureInitialFamilyBootstrap(params: { uid: string; email:
     )
     console.info('[firestore][bootstrap] membership do usuário criada automaticamente', { uid: params.uid, familyGroupId })
   }
+}
+
+export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
+  if (bootstrapDone.has(params.uid)) {
+    return
+  }
+
+  const inFlight = bootstrapInFlight.get(params.uid)
+  if (inFlight) {
+    return inFlight
+  }
+
+  const promise = runInitialFamilyBootstrap(params)
+    .then(() => {
+      bootstrapDone.add(params.uid)
+    })
+    .finally(() => {
+      bootstrapInFlight.delete(params.uid)
+    })
+
+  bootstrapInFlight.set(params.uid, promise)
+  return promise
 }
 
 export async function getFamilyByUser(uid: string): Promise<{ group: FamilyGroup | null; members: FamilyMember[] }> {
