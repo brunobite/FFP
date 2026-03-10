@@ -16,6 +16,7 @@ interface AuthContextType {
   user: AuthUser | null
   profile: UserProfile | null
   isLoading: boolean
+  isOffline: boolean
   signUp: (email: string, password: string, fullName: string) => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
@@ -29,13 +30,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isOffline, setIsOffline] = useState(false)
 
   const hydrateProfile = useCallback(async (authUser: AuthUser) => {
+    setIsOffline(false)
+
     try {
       await ensureInitialFamilyBootstrap({ uid: authUser.uid, email: authUser.email, displayName: authUser.displayName })
     } catch (error) {
       if (isFirestoreOfflineError(error)) {
         console.info('[firestore][auth] bootstrap remoto indisponível no momento; mantendo fluxo com cache/local.', error)
+        setIsOffline(true)
       } else {
         console.error('[firestore][auth] falha no bootstrap do perfil/família (não bloqueante)', error)
       }
@@ -47,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       if (isFirestoreOfflineError(error)) {
         console.info('[firestore][auth] leitura de perfil indisponível por rede/offline; sem bloqueio de navegação.', error)
+        setIsOffline(true)
       } else {
         console.error('[firestore][auth] falha ao carregar perfil do usuário (não bloqueante)', error)
       }
@@ -78,6 +84,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     void bootstrapSession()
   }, [hydrateProfile])
+
+  useEffect(() => {
+    if (!isOffline || !user) return
+
+    const handleOnline = () => {
+      console.info('[auth] conexão restabelecida — recarregando perfil.')
+      void hydrateProfile(user)
+    }
+
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
+  }, [isOffline, user, hydrateProfile])
 
   const signUp = useCallback(
     async (email: string, password: string, fullName: string) => {
@@ -113,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [hydrateProfile, user])
 
   return (
-    <AuthContext.Provider value={{ user, profile, isLoading, signUp, signIn, signOut, resetPassword, reloadProfile }}>
+    <AuthContext.Provider value={{ user, profile, isLoading, isOffline, signUp, signIn, signOut, resetPassword, reloadProfile }}>
       {children}
     </AuthContext.Provider>
   )

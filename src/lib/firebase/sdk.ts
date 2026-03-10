@@ -39,12 +39,14 @@ type RawFirestoreClient = {
 
 type FirestoreWithPersistence = RawFirestoreClient & {
   enablePersistence?: (settings?: { synchronizeTabs?: boolean }) => Promise<void>
+  settings?: (config: Record<string, unknown>) => void
 }
 
 type FirebaseCompatGlobal = {
   apps: unknown[]
   initializeApp: (config: Record<string, string | undefined>) => unknown
   app: () => { firestore: () => RawFirestoreClient }
+  firestore?: { CACHE_SIZE_UNLIMITED: number }
 }
 
 declare global {
@@ -108,8 +110,16 @@ function createFirestoreClient(): FirestoreCompatInstance {
 
   const db = sdk.app().firestore() as FirestoreWithPersistence
 
+  if (typeof db.settings === 'function' && sdk.firestore) {
+    try {
+      db.settings({ cacheSizeBytes: sdk.firestore.CACHE_SIZE_UNLIMITED })
+    } catch (settingsError) {
+      console.warn('[firestore][sdk] falha ao configurar cacheSizeBytes.', settingsError)
+    }
+  }
+
   if (typeof db.enablePersistence === 'function') {
-    void db.enablePersistence().catch((error) => {
+    void db.enablePersistence({ synchronizeTabs: true }).catch((error) => {
       const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code: string }).code : 'unknown'
       if (code === 'failed-precondition') {
         console.warn('[firestore][sdk] persistência local não habilitada (múltiplas abas abertas).')

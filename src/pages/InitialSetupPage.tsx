@@ -1,16 +1,17 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users } from 'lucide-react'
+import { Users, WifiOff } from 'lucide-react'
 import { Button, Card, CardContent, Input } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { createFamilyGroup } from '@/services/firestore/family'
-import { mapFirestoreError } from '@/services/firestore/errors'
+import { isFirestoreOfflineError, mapFirestoreError } from '@/services/firestore/errors'
 
 export function InitialSetupPage() {
   const { user, reloadProfile } = useAuth()
   const navigate = useNavigate()
   const [familyName, setFamilyName] = useState('')
   const [error, setError] = useState('')
+  const [errorIsOffline, setErrorIsOffline] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleCreateFamily = async (event: React.FormEvent) => {
@@ -19,12 +20,18 @@ export function InitialSetupPage() {
 
     try {
       setError('')
+      setErrorIsOffline(false)
       setIsSubmitting(true)
       await createFamilyGroup({ uid: user.uid, name: familyName.trim() || 'Minha Família' })
       await reloadProfile()
       navigate('/dashboard', { replace: true })
     } catch (err) {
-      setError(mapFirestoreError('concluir a configuração inicial', err))
+      if (isFirestoreOfflineError(err)) {
+        setErrorIsOffline(true)
+        setError('Você está sem conexão. Verifique sua internet e tente novamente.')
+      } else {
+        setError(mapFirestoreError('concluir a configuração inicial', err))
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -46,7 +53,12 @@ export function InitialSetupPage() {
             </div>
           </div>
 
-          {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>}
+          {error && (
+            <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${errorIsOffline ? 'bg-warning/10 text-warning' : 'bg-danger/10 text-danger'}`}>
+              {errorIsOffline && <WifiOff className="h-4 w-4 shrink-0" />}
+              {error}
+            </div>
+          )}
 
           <form onSubmit={handleCreateFamily} className="space-y-4">
             <Input
