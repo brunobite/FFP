@@ -1,5 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Tags } from 'lucide-react'
+import {
+  Activity,
+  BadgeDollarSign,
+  Briefcase,
+  Car,
+  Fuel,
+  Gift,
+  GraduationCap,
+  HandCoins,
+  HeartPulse,
+  Home,
+  Landmark,
+  Pill,
+  Plus,
+  Receipt,
+  ShoppingCart,
+  Target,
+  Tags,
+  Ticket,
+  UtensilsCrossed,
+  Wallet,
+} from 'lucide-react'
 import { Button, Card, CardContent, EmptyState, Input, LoadingState, Modal } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { listCategories, upsertCategory } from '@/services/firestore/finance'
@@ -14,11 +35,34 @@ interface CategoryForm {
   isActive: boolean
 }
 
+const PRESET_COLORS = ['#22c55e', '#16a34a', '#2563eb', '#0ea5e9', '#7c3aed', '#db2777', '#ef4444', '#f59e0b', '#64748b', '#14b8a6']
+
+const PRESET_ICONS = [
+  { id: 'casa', label: 'Casa', icon: Home },
+  { id: 'mercado', label: 'Mercado', icon: ShoppingCart },
+  { id: 'carro', label: 'Carro', icon: Car },
+  { id: 'combustivel', label: 'Combustível', icon: Fuel },
+  { id: 'saude', label: 'Saúde', icon: HeartPulse },
+  { id: 'farmacia', label: 'Farmácia', icon: Pill },
+  { id: 'educacao', label: 'Educação', icon: GraduationCap },
+  { id: 'lazer', label: 'Lazer', icon: Ticket },
+  { id: 'trabalho', label: 'Trabalho', icon: Briefcase },
+  { id: 'cartao', label: 'Cartão', icon: BadgeDollarSign },
+  { id: 'dinheiro', label: 'Dinheiro', icon: HandCoins },
+  { id: 'meta', label: 'Meta', icon: Target },
+  { id: 'presente', label: 'Presente', icon: Gift },
+  { id: 'filhos', label: 'Filhos', icon: Activity },
+  { id: 'assinatura', label: 'Assinatura', icon: Receipt },
+  { id: 'restaurante', label: 'Restaurante', icon: UtensilsCrossed },
+  { id: 'viagem', label: 'Viagem', icon: Wallet },
+  { id: 'impostos', label: 'Impostos', icon: Landmark },
+] as const
+
 const initialForm: CategoryForm = {
   name: '',
   type: 'expense',
-  color: '',
-  icon: '',
+  color: PRESET_COLORS[0] ?? '#22c55e',
+  icon: PRESET_ICONS[0]?.id ?? 'casa',
   isActive: true,
 }
 
@@ -31,6 +75,7 @@ export function CategoriesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [form, setForm] = useState<CategoryForm>(initialForm)
   const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
 
   const fetchRows = async () => {
     if (!user?.uid) return
@@ -54,6 +99,7 @@ export function CategoriesPage() {
 
   const openNew = () => {
     setForm(initialForm)
+    setFormError('')
     setIsModalOpen(true)
   }
 
@@ -62,19 +108,32 @@ export function CategoriesPage() {
       id: row.id,
       name: row.name,
       type: row.type,
-      color: row.color || '',
-      icon: row.icon || '',
+      color: row.color || PRESET_COLORS[0] || '#22c55e',
+      icon: row.icon || PRESET_ICONS[0]?.id || 'casa',
       isActive: row.isActive,
     })
+    setFormError('')
     setIsModalOpen(true)
   }
 
   const save = async () => {
-    if (!user?.uid || !form.name.trim()) {
-      setError('Informe um nome para a categoria.')
+    if (!user?.uid) {
+      setError('Faça login novamente para salvar a categoria.')
       return
     }
+
+    if (!form.name.trim()) {
+      setFormError('Informe um nome para a categoria.')
+      return
+    }
+
+    if (!form.icon) {
+      setFormError('Selecione um ícone para a categoria.')
+      return
+    }
+
     setSaving(true)
+    setFormError('')
     setError('')
     try {
       await upsertCategory(user.uid, form)
@@ -82,7 +141,7 @@ export function CategoriesPage() {
       setIsModalOpen(false)
       await fetchRows()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao salvar categoria.')
+      setFormError(err instanceof Error ? err.message : 'Falha ao salvar categoria.')
     } finally {
       setSaving(false)
     }
@@ -152,8 +211,17 @@ export function CategoriesPage() {
                   <tr key={row.id} className="border-b border-border/60 text-text-primary">
                     <td className="py-3 font-medium">{row.name}</td>
                     <td>{row.type === 'income' ? 'Receita' : 'Despesa'}</td>
-                    <td>{row.color || '-'}</td>
-                    <td>{row.icon || '-'}</td>
+                    <td>
+                      {row.color ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="h-4 w-4 rounded-full border border-border" style={{ backgroundColor: row.color }} />
+                          {row.color}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                    <td>{PRESET_ICONS.find((icon) => icon.id === row.icon)?.label || row.icon || '-'}</td>
                     <td>{row.isActive ? 'Ativa' : 'Inativa'}</td>
                     <td className="py-3 text-right">
                       <div className="flex justify-end gap-2">
@@ -187,8 +255,52 @@ export function CategoriesPage() {
               <option value="expense">Despesa</option>
             </select>
           </div>
-          <Input label="Cor (opcional)" value={form.color} placeholder="#22c55e" onChange={(event) => setForm((prev) => ({ ...prev, color: event.target.value }))} />
-          <Input label="Ícone (opcional)" value={form.icon} placeholder="home" onChange={(event) => setForm((prev) => ({ ...prev, icon: event.target.value }))} />
+
+          <div>
+            <label className="mb-1.5 block text-sm font-semibold text-text-primary">Cor</label>
+            <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+              {PRESET_COLORS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, color }))}
+                  className="h-9 w-9 rounded-full border-2 transition-transform hover:scale-105"
+                  style={{
+                    backgroundColor: color,
+                    borderColor: form.color === color ? 'white' : 'transparent',
+                    boxShadow: form.color === color ? `0 0 0 2px ${color}` : 'none',
+                  }}
+                  aria-label={`Selecionar cor ${color}`}
+                />
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-text-secondary">Cor selecionada: {form.color}</p>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-semibold text-text-primary">Ícone</label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {PRESET_ICONS.map((iconOption) => {
+                const Icon = iconOption.icon
+                const selected = form.icon === iconOption.id
+                return (
+                  <button
+                    key={iconOption.id}
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, icon: iconOption.id }))}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                      selected ? 'border-primary bg-primary/10 text-primary' : 'border-border text-text-secondary hover:border-primary/50'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span>{iconOption.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {formError ? <p className="text-sm text-danger">{formError}</p> : null}
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
               Cancelar
