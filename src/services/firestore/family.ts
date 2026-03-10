@@ -184,10 +184,6 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
 export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
   const db = await getFirestoreClient()
 
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    console.info('[firestore][bootstrap] bootstrap remoto ignorado: cliente offline')
-    return
-  }
 
   const profile = await ensureUserProfile(params)
   const now = nowIso()
@@ -206,16 +202,8 @@ export async function ensureInitialFamilyBootstrap(params: { uid: string; email:
   }
 
   if (!familyGroupId) {
-    const groupName = params.displayName?.trim() ? `Família de ${params.displayName.trim()}` : 'Minha Família'
-    const groupRef = await db.collection('family_groups').add({
-      name: groupName,
-      ownerUid: params.uid,
-      createdAt: now,
-      updatedAt: now,
-    })
-    familyGroupId = groupRef.id
-    await (await getUserDocRef(params.uid)).set({ familyGroupId, updatedAt: now }, { merge: true })
-    console.info('[firestore][bootstrap] novo grupo familiar criado automaticamente', { uid: params.uid, familyGroupId })
+    console.info('[firestore][bootstrap] usuário sem familyGroupId; aguardando configuração inicial', { uid: params.uid })
+    return
   }
 
   const groupRef = db.doc(`family_groups/${familyGroupId}`)
