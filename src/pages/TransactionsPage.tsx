@@ -124,7 +124,10 @@ export function TransactionsPage() {
   }
 
   const save = async () => {
-    if (!user?.uid) return
+    if (!user?.uid) {
+      setError('Faça login novamente para continuar.')
+      return
+    }
     const validationError = validate()
     if (validationError) {
       setError(validationError)
@@ -133,6 +136,7 @@ export function TransactionsPage() {
 
     setSaving(true)
     setError('')
+    setFeedback('')
     try {
       await upsertTransaction(user.uid, {
         id: form.id,
@@ -157,8 +161,12 @@ export function TransactionsPage() {
   }
 
   const remove = async (row: Transaction) => {
-    if (!user?.uid) return
+    if (!user?.uid) {
+      setError('Faça login novamente para continuar.')
+      return
+    }
     setError('')
+    setFeedback('')
     try {
       await deleteTransaction(user.uid, row.id)
       setFeedback('Lançamento excluído com sucesso.')

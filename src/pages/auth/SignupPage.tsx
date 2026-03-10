@@ -84,7 +84,7 @@ export function SignupPage() {
 
         <p className="mt-4 text-center text-sm text-text-secondary">
           Já tem conta?{' '}
-          <Link to="/auth/login" className="text-primary hover:text-primary-dark font-semibold">
+          <Link to="/login" className="text-primary hover:text-primary-dark font-semibold">
             Entrar
           </Link>
         </p>

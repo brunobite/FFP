@@ -84,6 +84,7 @@ export function AccountsPage() {
 
     setSaving(true)
     setError('')
+    setFeedback('')
     try {
       await upsertAccount(user.uid, {
         id: form.id,
@@ -103,8 +104,12 @@ export function AccountsPage() {
   }
 
   const toggleActive = async (row: Account) => {
-    if (!user?.uid) return
+    if (!user?.uid) {
+      setError('Faça login novamente para continuar.')
+      return
+    }
     setError('')
+    setFeedback('')
     try {
       await upsertAccount(user.uid, {
         id: row.id,

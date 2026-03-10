@@ -5,7 +5,7 @@ import { LogIn } from 'lucide-react'
 import { loginSchema, type LoginFormData } from '@/features/auth/schemas'
 import { useAuth } from '@/hooks/useAuth'
 import { Button, Card, CardContent, Input } from '@/components/ui'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 export function LoginPage() {
   const { signIn } = useAuth()
@@ -57,6 +57,15 @@ export function LoginPage() {
           <Button type="submit" className="w-full" isLoading={isSubmitting} leftIcon={<LogIn className="h-4 w-4" />}>
             Entrar
           </Button>
+        <div className="flex items-center justify-between text-sm">
+          <Link to="/forgot-password" className="font-semibold text-primary hover:text-primary-dark">
+            Esqueci minha senha
+          </Link>
+          <Link to="/signup" className="font-semibold text-primary hover:text-primary-dark">
+            Criar conta
+          </Link>
+        </div>
+
         </form>
       </CardContent>
     </Card>

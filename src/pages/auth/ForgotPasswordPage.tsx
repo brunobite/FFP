@@ -42,7 +42,7 @@ export function ForgotPasswordPage() {
           <p className="mb-6 text-sm text-text-secondary">
             Verifique sua caixa de entrada para redefinir sua senha.
           </p>
-          <Link to="/auth/login" className="text-sm text-primary hover:text-primary-dark font-semibold">
+          <Link to="/login" className="text-sm text-primary hover:text-primary-dark font-semibold">
             Voltar para o login
           </Link>
         </CardContent>
@@ -85,7 +85,7 @@ export function ForgotPasswordPage() {
         </form>
 
         <p className="mt-4 text-center text-sm text-text-secondary">
-          <Link to="/auth/login" className="text-primary hover:text-primary-dark font-semibold">
+          <Link to="/login" className="text-primary hover:text-primary-dark font-semibold">
             Voltar para o login
           </Link>
         </p>
