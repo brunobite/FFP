@@ -93,6 +93,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void hydrateProfile(user)
     }
 
+    // If navigator.onLine is already true, the 'online' event will never fire.
+    // Schedule an automatic retry so the app doesn't stay stuck on the offline screen.
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      const retryTimer = setTimeout(() => {
+        console.info('[auth] navigator.onLine é true mas isOffline está ativo — tentando reconectar.')
+        void hydrateProfile(user)
+      }, 3000)
+      return () => clearTimeout(retryTimer)
+    }
+
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)
   }, [isOffline, user, hydrateProfile])
