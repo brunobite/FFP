@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ffp-shell-v2'
+const CACHE_NAME = 'ffp-shell-v3'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest']
 
 self.addEventListener('install', (event) => {
@@ -19,10 +19,18 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const clone = response.clone()
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone))
+        if (response.ok) {
+          const clone = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone))
+        }
         return response
       })
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html'))),
   )
+})
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting()
+  }
 })
