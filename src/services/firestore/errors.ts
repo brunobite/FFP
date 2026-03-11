@@ -8,6 +8,49 @@ export function getFirestoreErrorCode(error: unknown): string {
   return rawCode.startsWith('firestore/') ? rawCode.replace('firestore/', '') : rawCode
 }
 
+function getErrorMessage(error: unknown): string {
+  return isRecord(error) && typeof error.message === 'string' ? error.message : String(error)
+}
+
+export function classifyFirestoreFailure(error: unknown):
+  | 'permission/rules'
+  | 'auth token'
+  | 'app check'
+  | 'network disabled/offline'
+  | 'cache vazio/leitura antes de hidratar'
+  | 'path/not-found'
+  | 'unknown' {
+  const code = getFirestoreErrorCode(error)
+  const message = getErrorMessage(error).toLowerCase()
+
+  if (code === 'permission-denied') {
+    if (message.includes('appcheck') || message.includes('app check')) return 'app check'
+    return 'permission/rules'
+  }
+
+  if (code === 'unauthenticated' || message.includes('auth') || message.includes('token')) {
+    return 'auth token'
+  }
+
+  if (message.includes('appcheck') || message.includes('app check')) {
+    return 'app check'
+  }
+
+  if (code === 'not-found' || message.includes('no document to update')) {
+    return 'path/not-found'
+  }
+
+  if (message.includes('from cache') || message.includes('cache') || message.includes('client is offline')) {
+    return 'cache vazio/leitura antes de hidratar'
+  }
+
+  if (isFirestoreOfflineError(error)) {
+    return 'network disabled/offline'
+  }
+
+  return 'unknown'
+}
+
 export function isFirestoreOfflineError(error: unknown): boolean {
   const code = getFirestoreErrorCode(error)
   if (code === 'unavailable') return true
@@ -49,11 +92,13 @@ export function mapFirestoreError(operation: string, error: unknown): string {
 
 export function logFirestoreError(context: string, error: unknown, extra?: Record<string, unknown>) {
   const code = getFirestoreErrorCode(error)
-  const message = isRecord(error) && typeof error.message === 'string' ? error.message : String(error)
+  const message = getErrorMessage(error)
+  const diagnosis = classifyFirestoreFailure(error)
   const payload = {
     context,
     code,
     message,
+    diagnosis,
     online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
     ...extra,
   }

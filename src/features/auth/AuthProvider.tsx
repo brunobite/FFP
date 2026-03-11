@@ -1,7 +1,7 @@
 import { createContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import type { UserProfile } from '@/types/database'
 import { ensureInitialFamilyBootstrap, getUserProfile } from '@/services/firestore/family'
-import { isFirestoreOfflineError } from '@/services/firestore/errors'
+import { classifyFirestoreFailure, getFirestoreErrorCode, isFirestoreOfflineError } from '@/services/firestore/errors'
 import {
   clearSession,
   loadSession,
@@ -84,6 +84,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.info('[firestore][auth] bootstrap remoto indisponível; fallback local mantido.', {
               uid: authUser.uid,
               online: navigator.onLine,
+              source: 'cache',
+              path: 'family bootstrap',
+              code: getFirestoreErrorCode(error),
+              diagnosis: classifyFirestoreFailure(error),
               reason: (error as { message?: string })?.message,
             })
           } else {
@@ -105,6 +109,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.info('[firestore][auth] leitura de perfil indisponível por rede/offline; sem bloqueio de navegação.', {
               uid: authUser.uid,
               online: navigator.onLine,
+              source: 'cache',
+              path: `users/${authUser.uid}`,
+              code: getFirestoreErrorCode(error),
+              diagnosis: classifyFirestoreFailure(error),
               reason: (error as { message?: string })?.message,
             })
           } else {
