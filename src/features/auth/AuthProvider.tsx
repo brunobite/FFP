@@ -39,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const retryAttempts = useRef(0)
   const retryTimer = useRef<number | null>(null)
   const activeUid = useRef<string | null>(null)
+  const sessionBootstrapStarted = useRef(false)
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimer.current !== null) {
@@ -125,6 +126,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   useEffect(() => {
+    if (sessionBootstrapStarted.current) return
+    sessionBootstrapStarted.current = true
+
     const bootstrapSession = async () => {
       const saved = loadSession()
       if (!saved) {
