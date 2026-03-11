@@ -1,7 +1,7 @@
 import { getFirestoreClient } from '@/lib/firebase/sdk'
 import { loadSession } from '@/services/firebase'
-import { isFirestoreOfflineError } from '@/services/firestore/errors'
-import type { FamilyGroup, FamilyMember, FamilyRole, UserProfile } from '@/types/database'
+import { isFirestoreOfflineError, logFirestoreError } from '@/services/firestore/errors'
+import type { FamilyGroup, FamilyInvite, FamilyMember, FamilyRole, UserProfile } from '@/types/database'
 
 interface ProfileDoc {
   uid?: string
@@ -23,16 +23,37 @@ interface FamilyGroupDoc {
 interface FamilyMemberDoc {
   familyGroupId?: string
   uid?: string
+  role?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+interface FamilyInviteDoc {
+  familyGroupId?: string
+  email?: string
   role?: FamilyRole
+  status?: 'pending' | 'accepted' | 'cancelled'
+  invitedByUid?: string
   createdAt?: string
   updatedAt?: string
 }
 
 const bootstrapInFlight = new Map<string, Promise<void>>()
 const bootstrapDone = new Set<string>()
+const fetchFamilyInFlight = new Map<string, Promise<{ group: FamilyGroup | null; members: FamilyMember[]; memberRole: FamilyRole | null }>>()
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function mapLegacyRole(role: string | undefined): FamilyRole {
+  if (role === 'owner' || role === 'proprietario') return 'proprietario'
+  if (role === 'adult' || role === 'administrador') return 'administrador'
+  return 'convidado_editor'
+}
+
+function canManageFamily(role: FamilyRole | null) {
+  return role === 'proprietario' || role === 'administrador'
 }
 
 function createDefaultProfile(params: { uid: string; email: string; displayName?: string | null }): UserProfile {
@@ -72,25 +93,21 @@ async function readDocWithFallback<T extends { get: (options?: { source?: 'defau
 ) {
   try {
     const result = await ref.get({ source: 'server' })
-    console.info(`[firestore][read] ${label} via server`, { online: navigator.onLine })
+    console.info(`[firestore][read] ${label} via server`, { online: navigator.onLine, source: 'server' })
     return { result, source: 'server' as const }
   } catch (serverError) {
     if (!isFirestoreOfflineError(serverError)) {
       throw serverError
     }
 
-    console.info(`[firestore][read] ${label} fallback para cache por indisponibilidade remota`, {
+    console.info(`[firestore][read] ${label} fallback para cache`, {
       online: navigator.onLine,
+      source: 'cache',
       reason: (serverError as { message?: string })?.message,
     })
 
-    try {
-      const result = await ref.get({ source: 'cache' })
-      console.info(`[firestore][read] ${label} via cache`, { online: navigator.onLine })
-      return { result, source: 'cache' as const }
-    } catch {
-      throw serverError
-    }
+    const result = await ref.get({ source: 'cache' })
+    return { result, source: 'cache' as const }
   }
 }
 
@@ -99,9 +116,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const { result: snapshot } = await readDocWithFallback(userRef, `users/${uid}`)
   const typed = snapshot as Awaited<ReturnType<typeof userRef.get>>
 
-  if (!typed.exists) {
-    return null
-  }
+  if (!typed.exists) return null
 
   return normalizeProfile(uid, typed.data() as ProfileDoc | undefined)
 }
@@ -119,12 +134,7 @@ export async function ensureUserProfile(params: { uid: string; email: string; di
     }
 
     const base = createDefaultProfile(params)
-    await userRef.set({
-      ...base,
-      displayName: params.displayName ?? 'Usuário',
-      photoURL: null,
-      familyGroupId: null,
-    })
+    await userRef.set({ ...base })
     return base
   }
 
@@ -136,13 +146,7 @@ export async function ensureUserProfile(params: { uid: string; email: string; di
   if (current.displayName !== nextDisplayName) updates.displayName = nextDisplayName
 
   if (Object.keys(updates).length > 0) {
-    await userRef.set(
-      {
-        ...updates,
-        updatedAt: nowIso(),
-      },
-      { merge: true },
-    )
+    await userRef.set({ ...updates, updatedAt: nowIso() }, { merge: true })
   }
 
   const refreshed = await userRef.get()
@@ -152,7 +156,7 @@ export async function ensureUserProfile(params: { uid: string; email: string; di
 export async function createFamilyGroup(params: { uid: string; name: string }) {
   const session = loadSession()
   if (!session?.email) {
-    throw new Error('[firestore] sessão inválida para criar família.')
+    throw new Error('Sessão inválida para criar família.')
   }
 
   const profile = await ensureUserProfile({
@@ -162,11 +166,7 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
   })
 
   if (profile.familyGroupId) {
-    const existingFamily = await getFamilyByUser(params.uid)
-    if (existingFamily.group) {
-      console.info(`[firestore][family] usuário ${params.uid} já possui grupo ${existingFamily.group.id}; criação ignorada.`)
-      return existingFamily.group.id
-    }
+    return profile.familyGroupId
   }
 
   const db = await getFirestoreClient()
@@ -182,20 +182,14 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
     {
       familyGroupId: groupRef.id,
       uid: params.uid,
-      role: 'owner' as FamilyRole,
+      role: 'proprietario' as FamilyRole,
       createdAt: now,
       updatedAt: now,
     },
     { merge: true },
   )
 
-  await (await getUserDocRef(params.uid)).set(
-    {
-      familyGroupId: groupRef.id,
-      updatedAt: now,
-    },
-    { merge: true },
-  )
+  await (await getUserDocRef(params.uid)).set({ familyGroupId: groupRef.id, updatedAt: now }, { merge: true })
 
   return groupRef.id
 }
@@ -214,19 +208,18 @@ async function runInitialFamilyBootstrap(params: { uid: string; email: string; d
     if (memberData.familyGroupId) {
       familyGroupId = memberData.familyGroupId
       await (await getUserDocRef(params.uid)).set({ familyGroupId, updatedAt: now }, { merge: true })
-      console.info('[firestore][bootstrap] família recuperada a partir da membership existente', { uid: params.uid, familyGroupId })
+      console.info('[firestore][bootstrap] família recuperada de family_members', { uid: params.uid, familyGroupId })
     }
   }
 
   if (!familyGroupId) {
-    console.info('[firestore][bootstrap] usuário sem familyGroupId; aguardando configuração inicial', { uid: params.uid })
+    console.info('[firestore][bootstrap] primeiro acesso sem família; aguardando configuração inicial', { uid: params.uid })
     return
   }
 
   const groupRef = db.doc(`family_groups/${familyGroupId}`)
-  const { result: groupSnapshot } = await readDocWithFallback(groupRef, `family_groups/${familyGroupId}`)
-  const typedGroup = groupSnapshot as Awaited<ReturnType<typeof groupRef.get>>
-  if (!typedGroup.exists && navigator.onLine) {
+  const groupSnapshot = await groupRef.get({ source: 'server' })
+  if (!groupSnapshot.exists && navigator.onLine) {
     await groupRef.set(
       {
         name: params.displayName?.trim() ? `Família de ${params.displayName.trim()}` : 'Minha Família',
@@ -236,87 +229,182 @@ async function runInitialFamilyBootstrap(params: { uid: string; email: string; d
       },
       { merge: true },
     )
-    console.warn('[firestore][bootstrap] grupo ausente foi recriado para manter consistência', { uid: params.uid, familyGroupId })
   }
 
   const memberRef = db.doc(`family_members/${params.uid}_${familyGroupId}`)
-  const { result: memberSnapshot } = await readDocWithFallback(memberRef, `family_members/${params.uid}_${familyGroupId}`)
-  const typedMember = memberSnapshot as Awaited<ReturnType<typeof memberRef.get>>
-  if (!typedMember.exists && navigator.onLine) {
+  const memberSnapshot = await memberRef.get({ source: 'server' })
+  if (!memberSnapshot.exists && navigator.onLine) {
     await memberRef.set(
       {
         familyGroupId,
         uid: params.uid,
-        role: 'owner' as FamilyRole,
+        role: 'proprietario' as FamilyRole,
         createdAt: now,
         updatedAt: now,
       },
       { merge: true },
     )
-    console.info('[firestore][bootstrap] membership do usuário criada automaticamente', { uid: params.uid, familyGroupId })
   }
 }
 
 export async function ensureInitialFamilyBootstrap(params: { uid: string; email: string; displayName?: string | null }) {
-  if (bootstrapDone.has(params.uid)) {
-    return
-  }
+  if (bootstrapDone.has(params.uid)) return
 
   const inFlight = bootstrapInFlight.get(params.uid)
-  if (inFlight) {
-    return inFlight
-  }
+  if (inFlight) return inFlight
 
   const promise = runInitialFamilyBootstrap(params)
     .then(() => {
       bootstrapDone.add(params.uid)
     })
-    .finally(() => {
-      bootstrapInFlight.delete(params.uid)
-    })
+    .finally(() => bootstrapInFlight.delete(params.uid))
 
   bootstrapInFlight.set(params.uid, promise)
   return promise
 }
 
-export async function getFamilyByUser(uid: string): Promise<{ group: FamilyGroup | null; members: FamilyMember[] }> {
-  const profile = await getUserProfile(uid)
+async function getCurrentMemberRole(uid: string, familyGroupId: string): Promise<FamilyRole | null> {
+  const db = await getFirestoreClient()
+  const memberSnapshot = await db.doc(`family_members/${uid}_${familyGroupId}`).get()
+  if (!memberSnapshot.exists) return null
+  const memberDoc = (memberSnapshot.data() || {}) as FamilyMemberDoc
+  return mapLegacyRole(memberDoc.role)
+}
 
-  if (!profile || !profile.familyGroupId) {
-    return { group: null, members: [] }
+export async function getFamilyByUser(uid: string): Promise<{ group: FamilyGroup | null; members: FamilyMember[]; memberRole: FamilyRole | null }> {
+  const inFlight = fetchFamilyInFlight.get(uid)
+  if (inFlight) return inFlight
+
+  const promise = (async () => {
+    const profile = await getUserProfile(uid)
+    if (!profile?.familyGroupId) {
+      return { group: null, members: [], memberRole: null }
+    }
+
+    const db = await getFirestoreClient()
+    const groupSnapshot = await db.doc(`family_groups/${profile.familyGroupId}`).get()
+    if (!groupSnapshot.exists) {
+      return { group: null, members: [], memberRole: null }
+    }
+
+    const groupDoc = (groupSnapshot.data() || {}) as FamilyGroupDoc
+    const membersSnapshot = await db.collection('family_members').where('familyGroupId', '==', profile.familyGroupId).get()
+
+    const members: FamilyMember[] = membersSnapshot.docs.map((member) => {
+      const data = (member.data() || {}) as FamilyMemberDoc
+      return {
+        id: member.id,
+        familyGroupId: data.familyGroupId || profile.familyGroupId!,
+        uid: data.uid || '',
+        role: mapLegacyRole(data.role),
+        createdAt: data.createdAt || nowIso(),
+        updatedAt: data.updatedAt || nowIso(),
+      }
+    })
+
+    const memberRole = members.find((member) => member.uid === uid)?.role ?? null
+
+    return {
+      group: {
+        id: groupSnapshot.id,
+        name: groupDoc.name || 'Família',
+        ownerUid: groupDoc.ownerUid || '',
+        createdAt: groupDoc.createdAt || nowIso(),
+        updatedAt: groupDoc.updatedAt || nowIso(),
+      },
+      members,
+      memberRole,
+    }
+  })().finally(() => {
+    fetchFamilyInFlight.delete(uid)
+  })
+
+  fetchFamilyInFlight.set(uid, promise)
+  return promise
+}
+
+export async function updateFamilyGroup(params: { uid: string; familyGroupId: string; name: string }) {
+  const role = await getCurrentMemberRole(params.uid, params.familyGroupId)
+  if (!canManageFamily(role)) {
+    const error = new Error('Sem permissão para editar dados da família.') as Error & { code: string }
+    error.code = 'permission-denied'
+    throw error
   }
 
   const db = await getFirestoreClient()
-  const groupSnapshot = await db.doc(`family_groups/${profile.familyGroupId}`).get()
+  await db.doc(`family_groups/${params.familyGroupId}`).set({ name: params.name, updatedAt: nowIso() }, { merge: true })
+}
 
-  if (!groupSnapshot.exists) {
-    console.warn(`[firestore][family] grupo familiar não encontrado para familyGroupId=${profile.familyGroupId}`)
-    return { group: null, members: [] }
+export async function createFamilyInvite(params: { uid: string; familyGroupId: string; email: string; role: FamilyRole }) {
+  const role = await getCurrentMemberRole(params.uid, params.familyGroupId)
+  if (!canManageFamily(role)) {
+    const error = new Error('Sem permissão para convidar membros.') as Error & { code: string }
+    error.code = 'permission-denied'
+    throw error
   }
 
-  const groupDoc = (groupSnapshot.data() || {}) as FamilyGroupDoc
-  const membersSnapshot = await db.collection('family_members').where('familyGroupId', '==', profile.familyGroupId).get()
+  const db = await getFirestoreClient()
+  const now = nowIso()
+  const existing = await db.collection('family_invites').where('familyGroupId', '==', params.familyGroupId).get()
+  const duplicate = existing.docs.some((doc) => {
+    const data = (doc.data() || {}) as FamilyInviteDoc
+    return data.email?.toLowerCase() === params.email.toLowerCase() && data.status === 'pending'
+  })
 
-  const members: FamilyMember[] = membersSnapshot.docs.map((member) => {
-    const data = (member.data() || {}) as FamilyMemberDoc
+  if (duplicate) {
+    const error = new Error('Já existe convite pendente para este e-mail.') as Error & { code: string }
+    error.code = 'already-exists'
+    throw error
+  }
+
+  await db.collection('family_invites').add({
+    familyGroupId: params.familyGroupId,
+    email: params.email.toLowerCase(),
+    role: params.role,
+    status: 'pending',
+    invitedByUid: params.uid,
+    createdAt: now,
+    updatedAt: now,
+  })
+}
+
+export async function listFamilyInvites(familyGroupId: string): Promise<FamilyInvite[]> {
+  const db = await getFirestoreClient()
+  const snapshot = await db.collection('family_invites').where('familyGroupId', '==', familyGroupId).get()
+
+  return snapshot.docs.map((doc) => {
+    const data = (doc.data() || {}) as FamilyInviteDoc
     return {
-      id: member.id,
-      familyGroupId: data.familyGroupId || profile.familyGroupId!,
-      uid: data.uid || '',
-      role: data.role || 'member',
+      id: doc.id,
+      familyGroupId: data.familyGroupId || familyGroupId,
+      email: data.email || '',
+      role: data.role || 'convidado_editor',
+      status: data.status || 'pending',
+      invitedByUid: data.invitedByUid || '',
       createdAt: data.createdAt || nowIso(),
       updatedAt: data.updatedAt || nowIso(),
     }
   })
+}
 
-  return {
-    group: {
-      id: groupSnapshot.id,
-      name: groupDoc.name || 'Família',
-      ownerUid: groupDoc.ownerUid || '',
-      createdAt: groupDoc.createdAt || nowIso(),
-      updatedAt: groupDoc.updatedAt || nowIso(),
-    },
-    members,
+export async function updateFamilyMemberRole(params: { actorUid: string; member: FamilyMember; nextRole: FamilyRole }) {
+  const actorRole = await getCurrentMemberRole(params.actorUid, params.member.familyGroupId)
+  if (!canManageFamily(actorRole)) {
+    const error = new Error('Sem permissão para gerenciar papéis da família.') as Error & { code: string }
+    error.code = 'permission-denied'
+    throw error
   }
+
+  if (params.member.uid === params.actorUid && params.nextRole !== 'proprietario' && actorRole === 'proprietario') {
+    const error = new Error('O proprietário não pode remover seu próprio papel.') as Error & { code: string }
+    error.code = 'failed-precondition'
+    throw error
+  }
+
+  const db = await getFirestoreClient()
+  await db.doc(`family_members/${params.member.id}`).set({ role: params.nextRole, updatedAt: nowIso() }, { merge: true })
+}
+
+export function reportFamilyError(context: string, error: unknown, extra?: Record<string, unknown>) {
+  logFirestoreError(context, error, extra)
 }

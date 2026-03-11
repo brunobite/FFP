@@ -1,4 +1,4 @@
-export type FamilyRole = 'owner' | 'adult' | 'member'
+export type FamilyRole = 'proprietario' | 'administrador' | 'convidado_editor'
 
 export interface UserProfile {
   uid: string
@@ -23,6 +23,17 @@ export interface FamilyMember {
   familyGroupId: string
   uid: string
   role: FamilyRole
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FamilyInvite {
+  id: string
+  familyGroupId: string
+  email: string
+  role: FamilyRole
+  status: 'pending' | 'accepted' | 'cancelled'
+  invitedByUid: string
   createdAt: string
   updatedAt: string
 }

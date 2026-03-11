@@ -23,6 +23,12 @@ const ImportsPage = lazy(() => import('@/pages/ImportsPage').then((m) => ({ defa
 const AlertsPage = lazy(() => import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const InitialSetupPage = lazy(() => import('@/pages/InitialSetupPage').then((m) => ({ default: m.InitialSetupPage })))
+const FamilyLayoutPage = lazy(() => import('@/pages/family/FamilyLayoutPage').then((m) => ({ default: m.FamilyLayoutPage })))
+const FamilyProfilePage = lazy(() => import('@/pages/family/FamilyProfilePage').then((m) => ({ default: m.FamilyProfilePage })))
+const FamilyEditPage = lazy(() => import('@/pages/family/FamilyEditPage').then((m) => ({ default: m.FamilyEditPage })))
+const FamilyInvitesPage = lazy(() => import('@/pages/family/FamilyInvitesPage').then((m) => ({ default: m.FamilyInvitesPage })))
+const FamilyMembersPage = lazy(() => import('@/pages/family/FamilyMembersPage').then((m) => ({ default: m.FamilyMembersPage })))
+const FamilyPermissionsPage = lazy(() => import('@/pages/family/FamilyPermissionsPage').then((m) => ({ default: m.FamilyPermissionsPage })))
 
 export function AppRouter() {
   return (
@@ -42,6 +48,13 @@ export function AppRouter() {
             <Route element={<AppShell />}>
               <Route path="/configuracao-inicial" element={<InitialSetupPage />} />
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/familia" element={<FamilyLayoutPage />}>
+                <Route index element={<FamilyProfilePage />} />
+                <Route path="editar" element={<FamilyEditPage />} />
+                <Route path="convites" element={<FamilyInvitesPage />} />
+                <Route path="membros" element={<FamilyMembersPage />} />
+                <Route path="permissoes" element={<FamilyPermissionsPage />} />
+              </Route>
               <Route path="/lancamentos" element={<TransactionsPage />} />
               <Route path="/receitas" element={<RevenuesPage />} />
               <Route path="/despesas" element={<ExpensesPage />} />

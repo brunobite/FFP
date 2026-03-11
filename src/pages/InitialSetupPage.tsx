@@ -26,11 +26,18 @@ export function InitialSetupPage() {
       await reloadProfile()
       navigate('/dashboard', { replace: true })
     } catch (err) {
+      console.error('[family][setup] falha ao criar família', {
+        uid: user.uid,
+        online: navigator.onLine,
+        familyName: familyName.trim() || 'Minha Família',
+        error: err,
+      })
+
       if (isFirestoreOfflineError(err)) {
         setErrorIsOffline(true)
         setError('Você está sem conexão. Verifique sua internet e tente novamente.')
       } else {
-        setError(mapFirestoreError('concluir a configuração inicial', err))
+        setError(mapFirestoreError('concluir a configuração inicial da família', err))
       }
     } finally {
       setIsSubmitting(false)

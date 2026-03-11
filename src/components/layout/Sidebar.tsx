@@ -13,14 +13,18 @@ import {
   FileUp,
   BellRing,
   Settings,
+  Users,
+  Download,
   LogOut,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
-import { Avatar } from '@/components/ui'
+import { Avatar, Button } from '@/components/ui'
+import { usePWAInstall } from '@/hooks/usePWAInstall'
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
+  { icon: Users, label: 'Família', path: '/familia' },
   { icon: ArrowUpDown, label: 'Lançamentos', path: '/lancamentos' },
   { icon: TrendingUp, label: 'Receitas', path: '/receitas' },
   { icon: TrendingDown, label: 'Despesas', path: '/despesas' },
@@ -41,6 +45,7 @@ interface SidebarProps {
 
 export function Sidebar({ className }: SidebarProps) {
   const { profile, signOut } = useAuth()
+  const { canInstall, install } = usePWAInstall()
 
   return (
     <aside className={cn('flex h-full w-64 flex-col bg-bg-sidebar text-white', className)}>
@@ -65,6 +70,17 @@ export function Sidebar({ className }: SidebarProps) {
             {item.label}
           </NavLink>
         ))}
+
+        {canInstall && (
+          <Button
+            variant="ghost"
+            className="mt-3 w-full justify-start text-white hover:bg-white/10"
+            leftIcon={<Download className="h-4 w-4" />}
+            onClick={() => void install()}
+          >
+            Instalar no Android
+          </Button>
+        )}
       </nav>
 
       <div className="border-t border-white/10 p-4">

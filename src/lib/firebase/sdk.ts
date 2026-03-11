@@ -117,13 +117,12 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
     })
 
   const db = firestoreModule.initializeFirestore(app, {
-    cacheSizeBytes: firestoreModule.CACHE_SIZE_UNLIMITED,
     localCache: firestoreModule.persistentLocalCache({
       tabManager: firestoreModule.persistentMultipleTabManager(),
     }),
   })
 
-  console.info('[firestore][sdk] cliente Firestore Web SDK inicializado (singleton/modular)')
+  console.info('[firestore][sdk] cliente Firestore Web SDK inicializado (singleton/modular, cache local persistente)')
 
   const resolveDocRead = async (ref: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
     if (source === 'server') return firestoreModule.getDocFromServer(ref)
