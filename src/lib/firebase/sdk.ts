@@ -125,15 +125,37 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
   console.info('[firestore][sdk] cliente Firestore Web SDK inicializado (singleton/modular, cache local persistente)')
 
   const resolveDocRead = async (ref: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
-    if (source === 'server') return firestoreModule.getDocFromServer(ref)
     if (source === 'cache') return firestoreModule.getDocFromCache(ref)
-    return firestoreModule.getDoc(ref)
+    if (source === 'server') return firestoreModule.getDocFromServer(ref)
+
+    // Default: try server first, fall back to cache if offline
+    try {
+      return await firestoreModule.getDocFromServer(ref)
+    } catch (err) {
+      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+      if (!isOffline) throw err
+      console.info('[firestore][sdk] doc read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
+      return firestoreModule.getDocFromCache(ref)
+    }
   }
 
   const resolveQueryRead = async (queryRef: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
-    if (source === 'server') return firestoreModule.getDocsFromServer(queryRef)
     if (source === 'cache') return firestoreModule.getDocsFromCache(queryRef)
-    return firestoreModule.getDocs(queryRef)
+    if (source === 'server') return firestoreModule.getDocsFromServer(queryRef)
+
+    // Default: try server first, fall back to cache if offline
+    try {
+      return await firestoreModule.getDocsFromServer(queryRef)
+    } catch (err) {
+      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+      if (!isOffline) throw err
+      console.info('[firestore][sdk] query read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
+      return firestoreModule.getDocsFromCache(queryRef)
+    }
   }
 
   return {

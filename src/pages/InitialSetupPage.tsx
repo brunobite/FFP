@@ -22,6 +22,13 @@ export function InitialSetupPage() {
       setError('')
       setErrorIsOffline(false)
       setIsSubmitting(true)
+
+      if (!navigator.onLine) {
+        setErrorIsOffline(true)
+        setError('Sem conexão com a internet. Conecte-se para criar seu grupo familiar.')
+        return
+      }
+
       await createFamilyGroup({ uid: user.uid, name: familyName.trim() || 'Minha Família' })
       await reloadProfile()
       navigate('/dashboard', { replace: true })
