@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { MobileNav } from './MobileNav'
+import { OfflineBanner } from '@/components/ui/OfflineBanner'
 
 export function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -21,6 +22,7 @@ export function AppShell() {
 
       {/* Main Content */}
       <div className="flex flex-1 flex-col overflow-hidden">
+        <OfflineBanner />
         <Header onMenuClick={() => setMobileNavOpen(true)} />
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           <Outlet />

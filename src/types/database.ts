@@ -6,6 +6,8 @@ export interface UserProfile {
   displayName: string
   photoURL: string | null
   familyGroupId: string | null
+  role: FamilyRole | null
+  setupCompleted: boolean
   createdAt: string
   updatedAt: string
 }

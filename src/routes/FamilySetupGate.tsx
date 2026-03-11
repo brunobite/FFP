@@ -1,12 +1,11 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { LoadingScreen } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
-import { OfflineFallbackScreen } from '@/components/ui/OfflineFallbackScreen'
 
 const SETUP_PATH = '/configuracao-inicial'
 
 export function FamilySetupGate() {
-  const { user, profile, isLoading, isOffline } = useAuth()
+  const { user, profile, isLoading } = useAuth()
   const location = useLocation()
 
   if (isLoading) {
@@ -18,10 +17,6 @@ export function FamilySetupGate() {
   }
 
   if (!profile) {
-    if (isOffline) {
-      return <OfflineFallbackScreen />
-    }
-
     if (location.pathname !== SETUP_PATH) {
       return <Navigate to={SETUP_PATH} replace />
     }
@@ -29,11 +24,13 @@ export function FamilySetupGate() {
     return <Outlet />
   }
 
-  if (!profile.familyGroupId && location.pathname !== SETUP_PATH) {
+  const needsSetup = !profile.setupCompleted || !profile.familyGroupId
+
+  if (needsSetup && location.pathname !== SETUP_PATH) {
     return <Navigate to={SETUP_PATH} replace />
   }
 
-  if (profile.familyGroupId && location.pathname === SETUP_PATH) {
+  if (!needsSetup && location.pathname === SETUP_PATH) {
     return <Navigate to="/dashboard" replace />
   }
 

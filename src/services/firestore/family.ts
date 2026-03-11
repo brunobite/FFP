@@ -9,6 +9,8 @@ interface ProfileDoc {
   displayName?: string
   photoURL?: string | null
   familyGroupId?: string | null
+  role?: string | null
+  setupCompleted?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -69,6 +71,8 @@ function createDefaultProfile(params: { uid: string; email: string; displayName?
     displayName: params.displayName ?? 'Usuário',
     photoURL: null,
     familyGroupId: null,
+    role: null,
+    setupCompleted: false,
     createdAt: now,
     updatedAt: now,
   }
@@ -82,6 +86,8 @@ function normalizeProfile(uid: string, data: ProfileDoc | undefined, fallback?: 
     displayName: data?.displayName || fallback?.displayName || 'Usuário',
     photoURL: data?.photoURL || null,
     familyGroupId: data?.familyGroupId || null,
+    role: data?.role ? mapLegacyRole(data.role) : null,
+    setupCompleted: data?.setupCompleted ?? false,
     createdAt: data?.createdAt || now,
     updatedAt: data?.updatedAt || now,
   }
@@ -159,7 +165,7 @@ export async function ensureUserProfile(params: { uid: string; email: string; di
     }
 
     const base = createDefaultProfile(params)
-    await userRef.set({ ...base })
+    await userRef.set({ ...base }, { merge: true })
     return base
   }
 
@@ -214,7 +220,7 @@ export async function createFamilyGroup(params: { uid: string; name: string }) {
     { merge: true },
   )
 
-  await (await getUserDocRef(params.uid)).set({ familyGroupId: groupRef.id, updatedAt: now }, { merge: true })
+  await (await getUserDocRef(params.uid)).set({ familyGroupId: groupRef.id, setupCompleted: true, role: 'proprietario', updatedAt: now }, { merge: true })
 
   return groupRef.id
 }
