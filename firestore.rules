@@ -5,28 +5,75 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAuthUser(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function familyGroupPath(familyGroupId) {
+      return /databases/$(database)/documents/family_groups/$(familyGroupId);
+    }
+
+    function hasFamilyGroup(familyGroupId) {
+      return exists(familyGroupPath(familyGroupId));
+    }
+
+    function familyGroupDoc(familyGroupId) {
+      return get(familyGroupPath(familyGroupId));
+    }
+
+    function memberPath(familyGroupId) {
+      return /databases/$(database)/documents/family_members/$(request.auth.uid + '_' + familyGroupId);
+    }
+
+    function memberExists(familyGroupId) {
+      return isSignedIn() && exists(memberPath(familyGroupId));
+    }
+
     function memberDoc(familyGroupId) {
-      return get(/databases/$(database)/documents/family_members/$(request.auth.uid + '_' + familyGroupId));
+      return get(memberPath(familyGroupId));
     }
 
     function memberRole(familyGroupId) {
       return memberDoc(familyGroupId).data.role;
     }
 
+    function isFamilyOwnerByDocument(familyGroupId) {
+      return isSignedIn() && hasFamilyGroup(familyGroupId) && familyGroupDoc(familyGroupId).data.ownerUid == request.auth.uid;
+    }
+
     function isOwner(familyGroupId) {
-      return isSignedIn() && memberDoc(familyGroupId).exists() && memberRole(familyGroupId) == 'proprietario';
+      return isSignedIn() && (
+        isFamilyOwnerByDocument(familyGroupId)
+        || (memberExists(familyGroupId) && memberRole(familyGroupId) == 'proprietario')
+      );
     }
 
     function isAdminOrOwner(familyGroupId) {
-      return isOwner(familyGroupId) || (isSignedIn() && memberDoc(familyGroupId).exists() && memberRole(familyGroupId) == 'administrador');
+      return isOwner(familyGroupId) || (memberExists(familyGroupId) && memberRole(familyGroupId) == 'administrador');
     }
 
     function isEditor(familyGroupId) {
-      return isAdminOrOwner(familyGroupId) || (isSignedIn() && memberDoc(familyGroupId).exists() && memberRole(familyGroupId) == 'convidado_editor');
+      return isAdminOrOwner(familyGroupId) || (memberExists(familyGroupId) && memberRole(familyGroupId) == 'convidado_editor');
+    }
+
+    function familyIdFromResource() {
+      return resource.data.familyGroupId != null ? resource.data.familyGroupId : resource.data.familyId;
+    }
+
+    function familyIdFromRequest() {
+      return request.resource.data.familyGroupId != null ? request.resource.data.familyGroupId : request.resource.data.familyId;
+    }
+
+    function canReadFamilyScopedResource() {
+      return isSignedIn() && familyIdFromResource() != null && isEditor(familyIdFromResource());
+    }
+
+    function canWriteFamilyScopedResource() {
+      return isSignedIn() && familyIdFromRequest() != null && isEditor(familyIdFromRequest());
     }
 
     match /users/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+      allow read, write: if isAuthUser(uid);
     }
 
     match /family_groups/{familyGroupId} {
@@ -35,15 +82,52 @@ service cloud.firestore {
       allow update, delete: if isAdminOrOwner(familyGroupId);
     }
 
+    match /families/{familyId} {
+      allow read: if isEditor(familyId);
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isAdminOrOwner(familyId);
+    }
+
     match /family_members/{memberId} {
       allow read: if isSignedIn() && resource.data.familyGroupId != null && isEditor(resource.data.familyGroupId);
-      allow create: if isSignedIn() && request.resource.data.familyGroupId != null && isAdminOrOwner(request.resource.data.familyGroupId);
+      allow create: if isSignedIn()
+        && request.resource.data.familyGroupId != null
+        && (
+          isAdminOrOwner(request.resource.data.familyGroupId)
+          || (
+            request.resource.data.uid == request.auth.uid
+            && request.resource.data.role == 'proprietario'
+            && hasFamilyGroup(request.resource.data.familyGroupId)
+            && familyGroupDoc(request.resource.data.familyGroupId).data.ownerUid == request.auth.uid
+          )
+        );
       allow update, delete: if isSignedIn() && resource.data.familyGroupId != null && isAdminOrOwner(resource.data.familyGroupId);
+    }
+
+    match /memberships/{membershipId} {
+      allow read: if canReadFamilyScopedResource();
+      allow create: if canWriteFamilyScopedResource();
+      allow update, delete: if canReadFamilyScopedResource() && isAdminOrOwner(familyIdFromResource());
     }
 
     match /family_invites/{inviteId} {
       allow read: if isSignedIn() && isEditor(resource.data.familyGroupId);
       allow create, update, delete: if isSignedIn() && isAdminOrOwner(request.resource.data.familyGroupId);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if canReadFamilyScopedResource();
+      allow create, update, delete: if canWriteFamilyScopedResource();
+    }
+
+    match /accounts/{accountId} {
+      allow read: if canReadFamilyScopedResource();
+      allow create, update, delete: if canWriteFamilyScopedResource();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if canReadFamilyScopedResource();
+      allow create, update, delete: if canWriteFamilyScopedResource();
     }
   }
 }

@@ -1,6 +1,6 @@
 import { getFirestoreClient } from '@/lib/firebase/sdk'
 import { loadSession } from '@/services/firebase'
-import { isFirestoreOfflineError, logFirestoreError } from '@/services/firestore/errors'
+import { classifyFirestoreFailure, getFirestoreErrorCode, isFirestoreOfflineError, logFirestoreError } from '@/services/firestore/errors'
 import type { FamilyGroup, FamilyInvite, FamilyMember, FamilyRole, UserProfile } from '@/types/database'
 
 interface ProfileDoc {
@@ -41,6 +41,11 @@ interface FamilyInviteDoc {
 const bootstrapInFlight = new Map<string, Promise<void>>()
 const bootstrapDone = new Set<string>()
 const fetchFamilyInFlight = new Map<string, Promise<{ group: FamilyGroup | null; members: FamilyMember[]; memberRole: FamilyRole | null }>>()
+
+
+function getOnlineStatus() {
+  return typeof navigator !== 'undefined' ? navigator.onLine : undefined
+}
 
 function nowIso() {
   return new Date().toISOString()
@@ -90,30 +95,50 @@ async function getUserDocRef(uid: string) {
 async function readDocWithFallback<T extends { get: (options?: { source?: 'default' | 'server' | 'cache' }) => Promise<unknown> }>(
   ref: T,
   label: string,
+  uid?: string,
 ) {
   try {
     const result = await ref.get({ source: 'server' })
-    console.info(`[firestore][read] ${label} via server`, { online: navigator.onLine, source: 'server' })
+    console.info(`[firestore][read] ${label} via server`, { uid: uid || null, online: getOnlineStatus(), source: 'server' })
     return { result, source: 'server' as const }
   } catch (serverError) {
+    const code = getFirestoreErrorCode(serverError)
     if (!isFirestoreOfflineError(serverError)) {
+      logFirestoreError('firestore.read.server', serverError, {
+        uid: uid || null,
+        path: label,
+        source: 'server',
+      })
       throw serverError
     }
 
     console.info(`[firestore][read] ${label} fallback para cache`, {
-      online: navigator.onLine,
+      uid: uid || null,
+      online: getOnlineStatus(),
       source: 'cache',
+      code,
+      diagnosis: classifyFirestoreFailure(serverError),
       reason: (serverError as { message?: string })?.message,
+      path: label,
     })
 
-    const result = await ref.get({ source: 'cache' })
-    return { result, source: 'cache' as const }
+    try {
+      const result = await ref.get({ source: 'cache' })
+      return { result, source: 'cache' as const }
+    } catch (cacheError) {
+      logFirestoreError('firestore.read.cache', cacheError, {
+        uid: uid || null,
+        path: label,
+        source: 'cache',
+      })
+      throw cacheError
+    }
   }
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const userRef = await getUserDocRef(uid)
-  const { result: snapshot } = await readDocWithFallback(userRef, `users/${uid}`)
+  const { result: snapshot } = await readDocWithFallback(userRef, `users/${uid}`, uid)
   const typed = snapshot as Awaited<ReturnType<typeof userRef.get>>
 
   if (!typed.exists) return null
@@ -123,7 +148,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 
 export async function ensureUserProfile(params: { uid: string; email: string; displayName?: string | null }) {
   const userRef = await getUserDocRef(params.uid)
-  const { result: existing } = await readDocWithFallback(userRef, `users/${params.uid}`)
+  const { result: existing } = await readDocWithFallback(userRef, `users/${params.uid}`, params.uid)
   const typedExisting = existing as Awaited<ReturnType<typeof userRef.get>>
 
   if (!typedExisting.exists) {
