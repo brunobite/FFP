@@ -1,11 +1,9 @@
 import { initializeApp, getApps } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
 import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
 } from 'firebase/firestore'
-import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,28 +14,25 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
-// [DEBUG] Verificar se as variáveis VITE_ estão sendo injetadas corretamente
-console.log('[firebase] config carregada:', {
-  projectId: firebaseConfig.projectId,
-  authDomain: firebaseConfig.authDomain,
-  storageBucket: firebaseConfig.storageBucket,
-  hasApiKey: !!firebaseConfig.apiKey,
-  appId: firebaseConfig.appId,
-})
-
-// Garante que o app só é inicializado uma vez
+// Guard: inicializa apenas uma vez
 const app = getApps().length === 0
   ? initializeApp(firebaseConfig)
-  : getApps()[0]!
+  : getApps()[0]
 
-export const auth = getAuth(app)
+// Firestore com cache persistente — apenas no browser
+let db: ReturnType<typeof initializeFirestore>
 
-// Inicialização moderna do Firestore com persistência
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager(),
-  }),
-})
+if (typeof window !== 'undefined') {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  })
+} else {
+  // Fallback para SSR/build — sem cache persistente
+  const { getFirestore } = require('firebase/firestore')
+  db = getFirestore(app)
+}
 
-export const storage = getStorage(app)
+export { db }
 export default app
