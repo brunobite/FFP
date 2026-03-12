@@ -1,4 +1,22 @@
-import { firebase as firebaseConfig } from '@/lib/firebase/config'
+import { db } from '@/lib/firebase'
+import {
+  collection,
+  doc,
+  getDocFromCache,
+  getDocFromServer,
+  getDocsFromCache,
+  getDocsFromServer,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  addDoc,
+  query,
+  where,
+  type DocumentReference,
+  type Query,
+  type DocumentData,
+  type WhereFilterOp,
+} from 'firebase/firestore'
 
 type QuerySnapshot = { docs: Array<{ id: string; data: () => Record<string, unknown> }> }
 type DocumentSnapshot = { exists: boolean; id: string; data: () => Record<string, unknown> | undefined }
@@ -19,58 +37,10 @@ type FirestoreCompatInstance = {
   }
 }
 
-type FirestoreModule = {
-  CACHE_SIZE_UNLIMITED: number
-  collection: (db: unknown, path: string) => unknown
-  deleteDoc: (ref: unknown) => Promise<void>
-  doc: (db: unknown, path: string) => unknown
-  getDoc: (ref: unknown) => Promise<{ exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }>
-  getDocFromCache: (ref: unknown) => Promise<{ exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }>
-  getDocFromServer: (ref: unknown) => Promise<{ exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }>
-  getDocs: (query: unknown) => Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }>
-  getDocsFromCache: (query: unknown) => Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }>
-  getDocsFromServer: (query: unknown) => Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }>
-  initializeFirestore: (app: unknown, settings: Record<string, unknown>) => unknown
-  persistentLocalCache: (settings?: { tabManager?: unknown }) => unknown
-  persistentMultipleTabManager: () => unknown
-  query: (collectionRef: unknown, ...constraints: unknown[]) => unknown
-  setDoc: (docRef: unknown, data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>
-  updateDoc: (docRef: unknown, data: Record<string, unknown>) => Promise<void>
-  where: (fieldPath: string, opStr: string, value: unknown) => unknown
-  addDoc: (collectionRef: unknown, data: Record<string, unknown>) => Promise<{ id: string }>
-}
-
-type AppModule = {
-  getApps: () => unknown[]
-  getApp: () => unknown
-  initializeApp: (config: Record<string, string | undefined>) => unknown
-}
-
-let clientPromise: Promise<FirestoreCompatInstance> | null = null
-let modulesPromise: Promise<{ app: AppModule; firestore: FirestoreModule }> | null = null
-
 function createFirestoreError(message: string, code: string) {
   const error = new Error(message) as Error & { code: string }
   error.code = code
   return error
-}
-
-async function loadFirebaseModules() {
-  if (!modulesPromise) {
-    const importFromUrl = new Function('url', 'return import(url)') as (url: string) => Promise<unknown>
-    modulesPromise = Promise.all([
-      importFromUrl('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
-      importFromUrl('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js'),
-    ]).then(([app, firestore]) => ({ app: app as AppModule, firestore: firestore as FirestoreModule }))
-  }
-
-  return modulesPromise
-}
-
-function assertFirebaseReady() {
-  if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.appId) {
-    throw createFirestoreError('Firebase não configurado corretamente. Verifique as variáveis VITE_FIREBASE_*.', 'failed-precondition')
-  }
 }
 
 function mapError(error: unknown): never {
@@ -87,124 +57,100 @@ function mapError(error: unknown): never {
   throw createFirestoreError(message, code)
 }
 
-function mapQuerySnapshot(snapshot: { docs: Array<{ id: string; data: () => Record<string, unknown> }> }): QuerySnapshot {
+function mapQuerySnapshot(snapshot: { docs: Array<{ id: string; data: () => unknown }> }): QuerySnapshot {
   return {
-    docs: snapshot.docs.map((doc) => ({ id: doc.id, data: () => doc.data() })),
+    docs: snapshot.docs.map((d) => ({ id: d.id, data: () => d.data() as Record<string, unknown> })),
   }
 }
 
-function mapDocumentSnapshot(snapshot: { exists: () => boolean; id: string; data: () => Record<string, unknown> | undefined }): DocumentSnapshot {
+function mapDocumentSnapshot(snapshot: { exists: () => boolean; id: string; data: () => unknown }): DocumentSnapshot {
   return {
     exists: snapshot.exists(),
     id: snapshot.id,
-    data: () => snapshot.data(),
+    data: () => snapshot.data() as Record<string, unknown> | undefined,
   }
 }
 
-async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
-  assertFirebaseReady()
+async function attemptDocFromServer(ref: DocumentReference<DocumentData>, retry: boolean) {
+  try {
+    return await getDocFromServer(ref)
+  } catch (err) {
+    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    if (!isOffline) throw err
 
-  const { app: appModule, firestore: firestoreModule } = await loadFirebaseModules()
-  const app = appModule.getApps().length
-    ? appModule.getApp()
-    : appModule.initializeApp({
-      apiKey: firebaseConfig.apiKey,
-      authDomain: firebaseConfig.authDomain,
-      projectId: firebaseConfig.projectId,
-      storageBucket: firebaseConfig.storageBucket,
-      messagingSenderId: firebaseConfig.messagingSenderId,
-      appId: firebaseConfig.appId,
-    })
-
-  const db = firestoreModule.initializeFirestore(app, {
-    localCache: firestoreModule.persistentLocalCache({
-      tabManager: firestoreModule.persistentMultipleTabManager(),
-    }),
-  })
-
-  console.info('[firestore][sdk] cliente Firestore Web SDK inicializado (singleton/modular, cache local persistente)')
-
-  const attemptDocFromServer = async (ref: unknown, retry: boolean): ReturnType<typeof firestoreModule.getDocFromServer> => {
-    try {
-      return await firestoreModule.getDocFromServer(ref)
-    } catch (err) {
-      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
-      if (!isOffline) throw err
-
-      // If online but got an offline-like error, the SDK may still be warming up (cold-start race).
-      // Retry once after a short delay to let the Firestore SDK finish initializing.
-      if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
-        console.info('[firestore][sdk] servidor indisponível durante inicialização; retentando em 1s...', { online: true })
-        await new Promise((r) => setTimeout(r, 1000))
-        return attemptDocFromServer(ref, false)
-      }
-
-      throw err
+    if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
+      console.info('[firestore][sdk] servidor indisponível durante inicialização; retentando em 1s...', { online: true })
+      await new Promise((r) => setTimeout(r, 1000))
+      return attemptDocFromServer(ref, false)
     }
+
+    throw err
   }
+}
 
-  const resolveDocRead = async (ref: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
-    if (source === 'cache') return firestoreModule.getDocFromCache(ref)
-    if (source === 'server') return attemptDocFromServer(ref, true)
+async function resolveDocRead(ref: DocumentReference<DocumentData>, source: 'default' | 'server' | 'cache' = 'default') {
+  if (source === 'cache') return getDocFromCache(ref)
+  if (source === 'server') return attemptDocFromServer(ref, true)
 
-    // Default: try server first, fall back to cache if offline
-    try {
-      return await attemptDocFromServer(ref, true)
-    } catch (err) {
-      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
-      if (!isOffline) throw err
-      console.info('[firestore][sdk] doc read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
-      return firestoreModule.getDocFromCache(ref)
+  try {
+    return await attemptDocFromServer(ref, true)
+  } catch (err) {
+    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    if (!isOffline) throw err
+    console.info('[firestore][sdk] doc read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
+    return getDocFromCache(ref)
+  }
+}
+
+async function attemptQueryFromServer(queryRef: Query<DocumentData>, retry: boolean) {
+  try {
+    return await getDocsFromServer(queryRef)
+  } catch (err) {
+    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    if (!isOffline) throw err
+
+    if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
+      console.info('[firestore][sdk] query servidor indisponível durante inicialização; retentando em 1s...', { online: true })
+      await new Promise((r) => setTimeout(r, 1000))
+      return attemptQueryFromServer(queryRef, false)
     }
+
+    throw err
   }
+}
 
-  const attemptQueryFromServer = async (queryRef: unknown, retry: boolean): ReturnType<typeof firestoreModule.getDocsFromServer> => {
-    try {
-      return await firestoreModule.getDocsFromServer(queryRef)
-    } catch (err) {
-      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
-      if (!isOffline) throw err
+async function resolveQueryRead(queryRef: Query<DocumentData>, source: 'default' | 'server' | 'cache' = 'default') {
+  if (source === 'cache') return getDocsFromCache(queryRef)
+  if (source === 'server') return attemptQueryFromServer(queryRef, true)
 
-      if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
-        console.info('[firestore][sdk] query servidor indisponível durante inicialização; retentando em 1s...', { online: true })
-        await new Promise((r) => setTimeout(r, 1000))
-        return attemptQueryFromServer(queryRef, false)
-      }
-
-      throw err
-    }
+  try {
+    return await attemptQueryFromServer(queryRef, true)
+  } catch (err) {
+    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    if (!isOffline) throw err
+    console.info('[firestore][sdk] query read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
+    return getDocsFromCache(queryRef)
   }
+}
 
-  const resolveQueryRead = async (queryRef: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
-    if (source === 'cache') return firestoreModule.getDocsFromCache(queryRef)
-    if (source === 'server') return attemptQueryFromServer(queryRef, true)
-
-    // Default: try server first, fall back to cache if offline
-    try {
-      return await attemptQueryFromServer(queryRef, true)
-    } catch (err) {
-      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
-      if (!isOffline) throw err
-      console.info('[firestore][sdk] query read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
-      return firestoreModule.getDocsFromCache(queryRef)
-    }
-  }
+function createFirestoreClient(): FirestoreCompatInstance {
+  console.info('[firestore][sdk] cliente Firestore inicializado (singleton/modular, cache local persistente)')
 
   return {
     collection: (path: string) => {
-      const collectionRef = firestoreModule.collection(db, path)
+      const collectionRef = collection(db, path)
       return {
         add: async (data) => {
           try {
-            return await firestoreModule.addDoc(collectionRef, data)
+            return await addDoc(collectionRef, data)
           } catch (error) {
             mapError(error)
           }
@@ -212,7 +158,7 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
         where: (fieldPath: string, opStr: string, value: unknown) => ({
           get: async (options) => {
             try {
-              const queryRef = firestoreModule.query(collectionRef, firestoreModule.where(fieldPath, opStr, value))
+              const queryRef = query(collectionRef, where(fieldPath, opStr as WhereFilterOp, value))
               return mapQuerySnapshot(await resolveQueryRead(queryRef, options?.source))
             } catch (error) {
               mapError(error)
@@ -221,7 +167,7 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
         }),
         get: async (options) => {
           try {
-            return mapQuerySnapshot(await resolveQueryRead(collectionRef, options?.source))
+            return mapQuerySnapshot(await resolveQueryRead(query(collectionRef), options?.source))
           } catch (error) {
             mapError(error)
           }
@@ -229,7 +175,7 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
       }
     },
     doc: (path: string) => {
-      const docRef = firestoreModule.doc(db, path)
+      const docRef = doc(db, path)
       return {
         get: async (options) => {
           try {
@@ -240,21 +186,25 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
         },
         set: async (data, options) => {
           try {
-            await firestoreModule.setDoc(docRef, data, options)
+            if (options) {
+              await setDoc(docRef, data, options)
+            } else {
+              await setDoc(docRef, data)
+            }
           } catch (error) {
             mapError(error)
           }
         },
         update: async (data) => {
           try {
-            await firestoreModule.updateDoc(docRef, data)
+            await updateDoc(docRef, data)
           } catch (error) {
             mapError(error)
           }
         },
         delete: async () => {
           try {
-            await firestoreModule.deleteDoc(docRef)
+            await deleteDoc(docRef)
           } catch (error) {
             mapError(error)
           }
@@ -264,15 +214,11 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
   }
 }
 
-export async function getFirestoreClient(): Promise<FirestoreCompatInstance> {
-  if (!clientPromise) {
-    clientPromise = Promise.resolve().then(() => createFirestoreClient())
-  }
+let client: FirestoreCompatInstance | null = null
 
-  try {
-    return await clientPromise
-  } catch (error) {
-    clientPromise = null
-    throw error
+export async function getFirestoreClient(): Promise<FirestoreCompatInstance> {
+  if (!client) {
+    client = createFirestoreClient()
   }
+  return client
 }
