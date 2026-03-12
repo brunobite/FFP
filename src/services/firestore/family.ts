@@ -180,8 +180,9 @@ export async function ensureUserProfile(params: { uid: string; email: string; di
     await userRef.set({ ...updates, updatedAt: nowIso() }, { merge: true })
   }
 
-  const refreshed = await userRef.get()
-  return normalizeProfile(params.uid, refreshed.data() as ProfileDoc | undefined, params)
+  const { result: refreshed } = await readDocWithFallback(userRef, `users/${params.uid}`, params.uid)
+  const typedRefreshed = refreshed as Awaited<ReturnType<typeof userRef.get>>
+  return normalizeProfile(params.uid, typedRefreshed.data() as ProfileDoc | undefined, params)
 }
 
 export async function createFamilyGroup(params: { uid: string; name: string }) {
@@ -296,7 +297,7 @@ export async function ensureInitialFamilyBootstrap(params: { uid: string; email:
 
 async function getCurrentMemberRole(uid: string, familyGroupId: string): Promise<FamilyRole | null> {
   const db = await getFirestoreClient()
-  const memberSnapshot = await db.doc(`family_members/${uid}_${familyGroupId}`).get()
+  const memberSnapshot = await db.doc(`family_members/${uid}_${familyGroupId}`).get({ source: 'server' })
   if (!memberSnapshot.exists) return null
   const memberDoc = (memberSnapshot.data() || {}) as FamilyMemberDoc
   return mapLegacyRole(memberDoc.role)
@@ -313,13 +314,13 @@ export async function getFamilyByUser(uid: string): Promise<{ group: FamilyGroup
     }
 
     const db = await getFirestoreClient()
-    const groupSnapshot = await db.doc(`family_groups/${profile.familyGroupId}`).get()
+    const groupSnapshot = await db.doc(`family_groups/${profile.familyGroupId}`).get({ source: 'server' })
     if (!groupSnapshot.exists) {
       return { group: null, members: [], memberRole: null }
     }
 
     const groupDoc = (groupSnapshot.data() || {}) as FamilyGroupDoc
-    const membersSnapshot = await db.collection('family_members').where('familyGroupId', '==', profile.familyGroupId).get()
+    const membersSnapshot = await db.collection('family_members').where('familyGroupId', '==', profile.familyGroupId).get({ source: 'server' })
 
     const members: FamilyMember[] = membersSnapshot.docs.map((member) => {
       const data = (member.data() || {}) as FamilyMemberDoc
