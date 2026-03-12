@@ -124,13 +124,34 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
 
   console.info('[firestore][sdk] cliente Firestore Web SDK inicializado (singleton/modular, cache local persistente)')
 
+  const attemptDocFromServer = async (ref: unknown, retry: boolean): ReturnType<typeof firestoreModule.getDocFromServer> => {
+    try {
+      return await firestoreModule.getDocFromServer(ref)
+    } catch (err) {
+      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+      if (!isOffline) throw err
+
+      // If online but got an offline-like error, the SDK may still be warming up (cold-start race).
+      // Retry once after a short delay to let the Firestore SDK finish initializing.
+      if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
+        console.info('[firestore][sdk] servidor indisponível durante inicialização; retentando em 1s...', { online: true })
+        await new Promise((r) => setTimeout(r, 1000))
+        return attemptDocFromServer(ref, false)
+      }
+
+      throw err
+    }
+  }
+
   const resolveDocRead = async (ref: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
     if (source === 'cache') return firestoreModule.getDocFromCache(ref)
-    if (source === 'server') return firestoreModule.getDocFromServer(ref)
+    if (source === 'server') return attemptDocFromServer(ref, true)
 
     // Default: try server first, fall back to cache if offline
     try {
-      return await firestoreModule.getDocFromServer(ref)
+      return await attemptDocFromServer(ref, true)
     } catch (err) {
       const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
       const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
@@ -141,13 +162,32 @@ async function createFirestoreClient(): Promise<FirestoreCompatInstance> {
     }
   }
 
+  const attemptQueryFromServer = async (queryRef: unknown, retry: boolean): ReturnType<typeof firestoreModule.getDocsFromServer> => {
+    try {
+      return await firestoreModule.getDocsFromServer(queryRef)
+    } catch (err) {
+      const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
+      const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
+      const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+      if (!isOffline) throw err
+
+      if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
+        console.info('[firestore][sdk] query servidor indisponível durante inicialização; retentando em 1s...', { online: true })
+        await new Promise((r) => setTimeout(r, 1000))
+        return attemptQueryFromServer(queryRef, false)
+      }
+
+      throw err
+    }
+  }
+
   const resolveQueryRead = async (queryRef: unknown, source: 'default' | 'server' | 'cache' = 'default') => {
     if (source === 'cache') return firestoreModule.getDocsFromCache(queryRef)
-    if (source === 'server') return firestoreModule.getDocsFromServer(queryRef)
+    if (source === 'server') return attemptQueryFromServer(queryRef, true)
 
     // Default: try server first, fall back to cache if offline
     try {
-      return await firestoreModule.getDocsFromServer(queryRef)
+      return await attemptQueryFromServer(queryRef, true)
     } catch (err) {
       const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
       const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
