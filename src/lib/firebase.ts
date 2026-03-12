@@ -16,6 +16,15 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
+// [DEBUG] Verificar se as variáveis VITE_ estão sendo injetadas corretamente
+console.log('[firebase] config carregada:', {
+  projectId: firebaseConfig.projectId,
+  authDomain: firebaseConfig.authDomain,
+  storageBucket: firebaseConfig.storageBucket,
+  hasApiKey: !!firebaseConfig.apiKey,
+  appId: firebaseConfig.appId,
+})
+
 // Garante que o app só é inicializado uma vez
 const app = getApps().length === 0
   ? initializeApp(firebaseConfig)
