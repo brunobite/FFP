@@ -57,6 +57,30 @@ function mapError(error: unknown): never {
   throw createFirestoreError(message, code)
 }
 
+
+function getErrorCode(error: unknown) {
+  const raw = typeof (error as { code?: string })?.code === 'string' ? (error as { code: string }).code : 'unknown'
+  return raw.replace('firestore/', '')
+}
+
+function getErrorMessage(error: unknown) {
+  return typeof (error as { message?: string })?.message === 'string' ? (error as { message: string }).message.toLowerCase() : ''
+}
+
+function isConfigError(error: unknown) {
+  const code = getErrorCode(error)
+  const message = getErrorMessage(error)
+  return message.includes('database (default) not found') || message.includes('project configuration') || (code === 'failed-precondition' && message.includes('not configured'))
+}
+
+function isNetworkError(error: unknown) {
+  const code = getErrorCode(error)
+  const msg = getErrorMessage(error)
+  if (isConfigError(error)) return false
+  const hasNetworkSignal = msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+  return hasNetworkSignal || code === 'unavailable' && typeof navigator !== 'undefined' && !navigator.onLine
+}
+
 function mapQuerySnapshot(snapshot: { docs: Array<{ id: string; data: () => unknown }> }): QuerySnapshot {
   return {
     docs: snapshot.docs.map((d) => ({ id: d.id, data: () => d.data() as Record<string, unknown> })),
@@ -75,9 +99,7 @@ async function attemptDocFromServer(ref: DocumentReference<DocumentData>, retry:
   try {
     return await getDocFromServer(ref)
   } catch (err) {
-    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    const isOffline = isNetworkError(err)
     if (!isOffline) throw err
 
     if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
@@ -97,11 +119,9 @@ async function resolveDocRead(ref: DocumentReference<DocumentData>, source: 'def
   try {
     return await attemptDocFromServer(ref, true)
   } catch (err) {
-    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    const isOffline = isNetworkError(err)
     if (!isOffline) throw err
-    console.info('[firestore][sdk] doc read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
+    console.info('[firestore][sdk] doc read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined, code: getErrorCode(err) })
     return getDocFromCache(ref)
   }
 }
@@ -110,9 +130,7 @@ async function attemptQueryFromServer(queryRef: Query<DocumentData>, retry: bool
   try {
     return await getDocsFromServer(queryRef)
   } catch (err) {
-    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    const isOffline = isNetworkError(err)
     if (!isOffline) throw err
 
     if (retry && typeof navigator !== 'undefined' && navigator.onLine) {
@@ -132,11 +150,9 @@ async function resolveQueryRead(queryRef: Query<DocumentData>, source: 'default'
   try {
     return await attemptQueryFromServer(queryRef, true)
   } catch (err) {
-    const msg = typeof (err as { message?: string })?.message === 'string' ? (err as { message: string }).message.toLowerCase() : ''
-    const code = typeof (err as { code?: string })?.code === 'string' ? (err as { code: string }).code : ''
-    const isOffline = code === 'unavailable' || msg.includes('offline') || msg.includes('network') || msg.includes('client is offline')
+    const isOffline = isNetworkError(err)
     if (!isOffline) throw err
-    console.info('[firestore][sdk] query read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined })
+    console.info('[firestore][sdk] query read fallback para cache', { online: typeof navigator !== 'undefined' ? navigator.onLine : undefined, code: getErrorCode(err) })
     return getDocsFromCache(queryRef)
   }
 }
