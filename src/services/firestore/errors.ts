@@ -16,7 +16,12 @@ export function isFirestoreConfigError(error: unknown): boolean {
   const code = getFirestoreErrorCode(error)
   const message = getErrorMessage(error).toLowerCase()
 
-  if (message.includes('database (default) not found') || message.includes('project configuration')) {
+  if (
+    message.includes('database (default) not found')
+    || message.includes("database '(default)' not found")
+    || message.includes('database "(default)" not found')
+    || message.includes('project configuration')
+  ) {
     return true
   }
 
@@ -108,7 +113,12 @@ export function mapFirestoreError(operation: string, error: unknown): string {
       if (message.toLowerCase().includes('offline') || message.toLowerCase().includes('network')) {
         return 'O Firestore está indisponível por rede/offline no navegador. Verifique sua conexão e tente novamente.'
       }
-      if (message.toLowerCase().includes('não configurado') || message.toLowerCase().includes('configurado')) {
+      if (
+        message.toLowerCase().includes('não configurado')
+        || message.toLowerCase().includes('configurado')
+        || message.toLowerCase().includes('not configured')
+        || message.toLowerCase().includes('project configuration')
+      ) {
         return 'A inicialização do Firebase está incompleta. Verifique as variáveis VITE_FIREBASE_* do ambiente.'
       }
       return 'O Firestore recusou a operação devido a um pré-requisito não atendido.'
