@@ -4,7 +4,7 @@ import { Users, WifiOff } from 'lucide-react'
 import { Button, Card, CardContent, Input } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { createFamilyGroup } from '@/services/firestore/family'
-import { isFirestoreOfflineError, mapFirestoreError } from '@/services/firestore/errors'
+import { classifyFirestoreFailure, mapFirestoreError } from '@/services/firestore/errors'
 
 export function InitialSetupPage() {
   const { user, reloadProfile } = useAuth()
@@ -40,10 +40,12 @@ export function InitialSetupPage() {
         error: err,
       })
 
-      if (isFirestoreOfflineError(err)) {
+      const diagnosis = classifyFirestoreFailure(err)
+      if (diagnosis === 'network disabled/offline' && !navigator.onLine) {
         setErrorIsOffline(true)
         setError('Você está sem conexão. Verifique sua internet e tente novamente.')
       } else {
+        setErrorIsOffline(false)
         setError(mapFirestoreError('concluir a configuração inicial da família', err))
       }
     } finally {

@@ -12,16 +12,50 @@ function getErrorMessage(error: unknown): string {
   return isRecord(error) && typeof error.message === 'string' ? error.message : String(error)
 }
 
+export function isFirestoreConfigError(error: unknown): boolean {
+  const code = getFirestoreErrorCode(error)
+  const message = getErrorMessage(error).toLowerCase()
+
+  if (message.includes('database (default) not found') || message.includes('project configuration')) {
+    return true
+  }
+
+  return code === 'failed-precondition' && (message.includes('not configured') || message.includes('misconfigured'))
+}
+
+export function isFirestoreOfflineError(error: unknown): boolean {
+  const code = getFirestoreErrorCode(error)
+  const message = getErrorMessage(error).toLowerCase()
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine
+
+  if (!online) return true
+  if (isFirestoreConfigError(error)) return false
+
+  const hasNetworkSignal =
+    message.includes('offline') ||
+    message.includes('network') ||
+    message.includes('client is offline') ||
+    message.includes('failed to get document from cache')
+
+  if (code === 'unavailable') return hasNetworkSignal
+  if (code === 'failed-precondition') return hasNetworkSignal
+
+  return false
+}
+
 export function classifyFirestoreFailure(error: unknown):
   | 'permission/rules'
   | 'auth token'
   | 'app check'
   | 'network disabled/offline'
+  | 'config/firebase'
   | 'cache vazio/leitura antes de hidratar'
   | 'path/not-found'
   | 'unknown' {
   const code = getFirestoreErrorCode(error)
   const message = getErrorMessage(error).toLowerCase()
+
+  if (isFirestoreConfigError(error)) return 'config/firebase'
 
   if (code === 'permission-denied') {
     if (message.includes('appcheck') || message.includes('app check')) return 'app check'
@@ -40,7 +74,7 @@ export function classifyFirestoreFailure(error: unknown):
     return 'path/not-found'
   }
 
-  if (message.includes('from cache') || message.includes('cache') || message.includes('client is offline')) {
+  if (message.includes('from cache') || message.includes('cache')) {
     return 'cache vazio/leitura antes de hidratar'
   }
 
@@ -51,18 +85,13 @@ export function classifyFirestoreFailure(error: unknown):
   return 'unknown'
 }
 
-export function isFirestoreOfflineError(error: unknown): boolean {
-  const code = getFirestoreErrorCode(error)
-  if (code === 'unavailable') return true
-  if (code !== 'failed-precondition') return false
-
-  const message = isRecord(error) && typeof error.message === 'string' ? error.message.toLowerCase() : ''
-  return message.includes('offline') || message.includes('network')
-}
-
 export function mapFirestoreError(operation: string, error: unknown): string {
   const code = getFirestoreErrorCode(error)
-  const message = isRecord(error) && typeof error.message === 'string' ? error.message : String(error || 'erro desconhecido')
+  const message = getErrorMessage(error)
+
+  if (isFirestoreConfigError(error)) {
+    return 'Configuração do Firebase/Firestore inválida para este deploy. Revise as variáveis VITE_FIREBASE_* e confirme o projectId publicado no frontend.'
+  }
 
   switch (code) {
     case 'permission-denied':
@@ -101,6 +130,11 @@ export function logFirestoreError(context: string, error: unknown, extra?: Recor
     diagnosis,
     online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
     ...extra,
+  }
+
+  if (diagnosis === 'config/firebase') {
+    console.error('[firestore][config]', payload)
+    return
   }
 
   if (code === 'permission-denied' || code === 'unauthenticated') {

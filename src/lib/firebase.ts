@@ -1,38 +1,58 @@
-import { initializeApp, getApps } from 'firebase/app'
+import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app'
+import { getAuth } from 'firebase/auth'
 import {
+  getFirestore,
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  type Firestore,
 } from 'firebase/firestore'
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+interface FirebaseConfig {
+  apiKey: string
+  authDomain: string
+  projectId: string
+  storageBucket: string
+  messagingSenderId: string
+  appId: string
 }
 
-// Guard: inicializa apenas uma vez
-const app = getApps().length === 0
-  ? initializeApp(firebaseConfig)
-  : getApps()[0]
-
-// Firestore com cache persistente — apenas no browser
-let db: ReturnType<typeof initializeFirestore>
-
-if (typeof window !== 'undefined') {
-  db = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-    }),
-  })
-} else {
-  // Fallback para SSR/build — sem cache persistente
-  const { getFirestore } = require('firebase/firestore')
-  db = getFirestore(app)
+function getRequiredEnv(key: keyof ImportMetaEnv): string {
+  const value = import.meta.env[key]
+  if (!value) {
+    throw new Error(`[firebase] variável obrigatória ausente: ${key}`)
+  }
+  return value
 }
 
-export { db }
+const firebaseConfig: FirebaseConfig = {
+  apiKey: getRequiredEnv('VITE_FIREBASE_API_KEY'),
+  authDomain: getRequiredEnv('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: getRequiredEnv('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: getRequiredEnv('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: getRequiredEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: getRequiredEnv('VITE_FIREBASE_APP_ID'),
+}
+
+const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig)
+export const auth = getAuth(app)
+
+function createFirestoreInstance(): Firestore {
+  if (typeof window === 'undefined') {
+    return getFirestore(app)
+  }
+
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    })
+  } catch {
+    // Firestore já inicializado (HMR/import duplicado): reaproveita singleton existente.
+    return getFirestore(app)
+  }
+}
+
+export const db = createFirestoreInstance()
 export default app
