@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ffp-shell-v3'
+const CACHE_NAME = 'ffp-shell-v4'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest']
 
 self.addEventListener('install', (event) => {
@@ -18,6 +18,7 @@ self.addEventListener('fetch', (event) => {
 
   const requestUrl = new URL(event.request.url)
   if (requestUrl.protocol !== 'http:' && requestUrl.protocol !== 'https:') return
+  if (requestUrl.origin !== self.location.origin) return
 
   event.respondWith(
     fetch(event.request)
