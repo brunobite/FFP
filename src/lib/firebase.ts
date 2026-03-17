@@ -12,7 +12,12 @@ import { firebaseConfig, getFirebaseRuntimeLogPayload } from '@/lib/firebase/con
 const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig)
 
 console.info('[firebase][runtime]', getFirebaseRuntimeLogPayload())
-console.info('[firebase][apps]', getApps().map(({ name, options }) => ({ name, projectId: options.projectId })))
+console.info('[firebase][apps]', getApps().map(({ name, options }) => ({
+  name,
+  projectId: options.projectId,
+  authDomain: options.authDomain,
+  storageBucket: options.storageBucket,
+})))
 
 export const auth = getAuth(app)
 
